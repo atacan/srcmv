@@ -581,9 +581,8 @@ Consumption is the soundness core:
   instead, pushing the verdict toward `inconclusive`. Default off; reviewers
   who need copy-identity claims should enable it.
 - **`ambiguous_common` is verdict-visible.** A region whose every window is
-  hot — i.e., which has no cold window at all after §8.3 step 1, including
-  neighbor fallback per §8.2's hot-bucket rule — cannot be anchored, and no
-  byte of it may be
+  hot — i.e., which has no cold window at all under §8.3 step 1's probe rule —
+  cannot be anchored, and no byte of it may be
   credited or forgiven: its full length enters the ledger as
   `ambiguous_common_bytes`, and its presence forces `verdict = INCONCLUSIVE`
   with reason `ambiguous_common` (§9.1–§9.3). This is deliberately stricter
@@ -712,9 +711,8 @@ Each carries a structured reason string in `report.inconclusive_reasons[]`:
   (`SkippedInput`, §7) because they vanished mid-walk or failed stable-read
   verification; the tree changed underneath, so no verdict is reliable;
 - `strict_uniqueness_ambiguity` — only under `--strict-uniqueness`;
-- `ambiguous_common` — at least one region could not be anchored anywhere in
-  the head tree after hot-bucket suppression and neighbor-window fallback
-  (§8.3, §8.6);
+- `ambiguous_common` — at least one region has no cold index window anywhere
+  in the head tree after hot-bucket suppression (§8.2, §8.3 step 1, §8.6);
 - `report_truncated` — the serialized report overflowed its byte cap and
   listings were dropped (§11.3); absence of listed unmatched regions must
   never imply their absence in fact.
