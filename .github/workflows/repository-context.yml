@@ -7,12 +7,56 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+
+concurrency:
+  # Serialize report updates; only the newest main push matters.
+  group: repository-context-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   context:
-    name: Update repository context report
+    name: Open repository context report PR
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: atacan/repository-context-action@bfcf64d671fef827a70bb14693ffb0d26d9ce541 # v1
+      - id: context
+        uses: atacan/repository-context-action@bfcf64d671fef827a70bb14693ffb0d26d9ce541 # v1
+        with:
+          # Repository rules require changes to land through pull requests,
+          # so the action must not push to main itself.
+          commit: "false"
+      - name: Open or update the report pull request
+        if: steps.context.outputs.changed == 'true'
+        env:
+          # GH_TOKEN created with the workflow's own GITHUB_TOKEN cannot
+          # trigger further workflows, so such a pull request reports no CI
+          # checks and must be merged by an administrator. Set the
+          # REPOSITORY_CONTEXT_TOKEN secret (a fine-grained PAT with
+          # Contents/PR write) to make the pull request run CI and merge
+          # like any human pull request.
+          GH_TOKEN: ${{ secrets.REPOSITORY_CONTEXT_TOKEN || github.token }}
+          REPORT: REPOSITORY_CONTEXT_SIZE.md
+        run: |
+          set -euo pipefail
+          branch="bot/repository-context"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -- "$REPORT"
+          git commit -m "chore: update repository context size"
+          # The bot branch is owned by this workflow alone; concurrency
+          # serializes its runs.
+          git push --force origin "$branch"
+
+          open_pr="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
+          if [ -n "$open_pr" ]; then
+            echo "Pull request #$open_pr already open; pushed an update to it."
+            exit 0
+          fi
+          gh pr create \
+            --head "$branch" \
+            --title "chore: update repository context size" \
+            --body "Automated refresh of \`REPOSITORY_CONTEXT_SIZE.md\` generated from ${GITHUB_SHA}." \
+            --fill-first
