@@ -1,30 +1,35 @@
 name: Repository Context
 
 on:
-  # No path filter: cloc and tiktoken count every tracked file, so any
-  # pull request can move the report. Runs are cheap.
+  # Run once per pull request, only after it merges, rather than after
+  # every pushed commit. No path filter on purpose: cloc and tiktoken
+  # count every tracked file, so any change can move the numbers.
   pull_request:
     types:
-      - opened
-      - synchronize
-      - reopened
+      - closed
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  # One live report per pull request; newer pushes supersede older runs.
   group: repository-context-${{ github.event.number }}
   cancel-in-progress: true
 
 jobs:
   context:
     name: Report repository context size
+    # Closed-but-unmerged pull requests produce no report.
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge ref of a closed pull request can be garbage-collected;
+          # check out main so the report describes the repository exactly as
+          # the merge landed it.
+          ref: main
       - id: context
         uses: atacan/repository-context-action@bfcf64d671fef827a70bb14693ffb0d26d9ce541 # v1
         with:
