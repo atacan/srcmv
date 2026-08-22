@@ -548,8 +548,9 @@ Consumption is the soundness core:
   and flagged `pairing_ambiguous: true` on the affected records. Byte-level
   conservation is still provable (multiset containment with exclusive
   consumption — every copy of duplicated content contains an escape copy for
-  later equal regions, so ascending-order probing always finds one), so these
-  matches count toward `pass`.
+  later equal regions, so ascending-order probing finds one whenever a longer
+  distinct region has not already absorbed it, per §4's incompleteness note),
+  so these matches count toward `pass`.
 - `--strict-uniqueness` flips this: any record relying on multiplicity
   counting (its content had more removed copies than one, or more surviving
   candidates than consumed) contributes `strict_uniqueness_ambiguity` reasons
@@ -581,11 +582,13 @@ Consumption is the soundness core:
   residue is classified per §8.5.
 - **Line-edge normalization** is a sequence-valued transformation `W` pinned
   to the extraction line convention (§8.1 step 2): first replace every CRLF
-  and lone CR with LF; then split into terminator-exclusive line contents,
-  where a trailing terminator does not begin an additional line, an empty
-  input has zero lines, and a lone terminator is one empty line; then strip
-  leading and trailing ASCII whitespace from every line; finally **drop empty
-  lines** and compare the remaining content sequences for exact equality.
+  and lone CR with LF in a single left-to-right pass (CRLF pairs first, so no
+  spurious double terminators arise); then split into terminator-exclusive
+  line contents, where a trailing terminator does not begin an additional
+  line, an empty input has zero lines, and a lone terminator is one empty
+  line; then strip leading and trailing ASCII whitespace from every line;
+  finally **drop empty lines** and compare the remaining content sequences for
+  exact equality.
   Worked examples: `W("\r") = []`, `W("") = []`, `W("a\n") = ["a"]`,
   `W("  a\n\tb\r\n") = ["a", "b"]`, `W("a\n\nb") = W("a\nb") = ["a", "b"]`
   (blank-line insertion, deletion, and collapse are formatting churn by
@@ -611,7 +614,7 @@ Consumption is the soundness core:
   edits are clearly visible. `--count-formatting` promotes them to failures.
 - Partial edits decompose under this ordering without special cases: the
   anchor/gap extraction trims to exact changed bytes; an edited tail whose
-  bytes equal its counterpart under `T` qualifies at extraction time;
+  bytes equal its counterpart under `W` qualifies at extraction time;
   anything else proceeds to matching, and only genuinely unmatched residue
   remains.
 
@@ -637,7 +640,7 @@ Evaluated strictly in this order after matching completes:
 ```text
 if any fatal condition (§9.3):            verdict = INCONCLUSIVE
 else if unmatched_substantial_bytes > 0:  verdict = FAIL
-else if count_formatting && formatting_bytes > 0: verdict = FAIL
+else if count_formatting && formatting_only_bytes > 0: verdict = FAIL
 else:                                     verdict = PASS
 ```
 
@@ -790,7 +793,7 @@ Illustrative shape:
     "removed_bytes": 12344,
     "conserved_bytes": 12002,
     "conserved_exact_bytes": 11670,
-    "conserved_fragment_bytes": 332,
+    "conserved_fragments_bytes": 332,
     "formatting_only_bytes": 210,
     "insubstantial_residue_bytes": 22,
     "unmatched_substantial_bytes": 110,
@@ -1013,23 +1016,29 @@ Property tests (proptest, committed regressions), split by direction:
   formatting/residue. Friendly packings only: scattered copies never overlap
   each other, which is the domain where greedy matching is complete.
 - **Labeled hard-packing fixtures:** deterministic cases where distinct region
-  contents compete for intersecting occurrences, with lengths above every
+  contents compete for intersecting occurrences, with lengths at or above every
   floor so outcomes are verdict-visible, and with the expected outcome derived
   by hand-tracing §8.3–§8.5 before pinning. Canonical intersecting-regions
-  fixture: base file `f1` removes `r1 = U` (96 bytes of distinct, non-repeating
-  content) and `r2 = U[79..96] ++ y×15` (32 bytes: the last 17 bytes of `U`
-  followed by 15 `y` bytes); head contains only `C = U ++ y×15` (111 bytes) in
-  `a.txt`. Trace: greedy longest-first matches `r1` at `C[0..96)` and consumes
-  it; `r2`'s only occurrence `C[79..111)` intersects the consumed span so
-  exact matching fails; in fragment matching every window of `r2`'s `U`-derived
-  part verifies only inside consumed bytes and is rejected by consumption
-  checks, while the trailing 15-byte `y`-run is shorter than `K = 16` so no
-  probe window exists there — zero fragments accepted, residue 32 ≥ floor,
-  verdict `fail`. The outcome is *correct*, not merely conservative: under
-  exclusive accounting the interior segment of `U` is demanded twice but
-  exists once, so those bytes are genuinely unconserved. The fixture pins
-  that intersecting demands surface as `fail` deterministically rather than
-  as silent passes; it makes no solvability claim.
+  fixture, with the tree recipe pinned so the extracted region set — and the
+  golden ledger split — is reproducible from the text alone:
+  `U` is 96 bytes of distinct, non-repeating, terminator-free content that
+  excludes the byte `y`; `r1 = U` (96 bytes) and
+  `r2 = U[79..96] ++ y×15` (32 bytes). Base file
+  `f1 = P ++ r1 ++ Q ++ r2 ++ R`, where `P`, `Q`, `R` are unique single-line
+  sentinel contents; head retains `f1 = P ++ Q ++ R` and creates `a.txt` with
+  content `C = U ++ y×15` (111 bytes). Extraction on the modified pair yields
+  exactly regions `{r1, r2}`. Trace: greedy longest-first matches `r1` at
+  `C[0..96)` and consumes it; `r2`'s only occurrence `C[79..111)` intersects
+  the consumed span so exact matching fails; in fragment matching every window
+  of `r2`'s `U`-derived part verifies only inside consumed bytes and is
+  rejected by consumption checks, while the trailing 15-byte `y`-run is
+  shorter than `K = 16` so no probe window exists there — zero fragments
+  accepted, residue 32 ≥ floor, verdict `fail`. The outcome is *correct*, not
+  merely conservative: under exclusive accounting the interior segment of `U`
+  is demanded twice but exists once, so those bytes are genuinely
+  unconserved. The fixture pins that intersecting demands surface as `fail`
+  deterministically rather than as silent passes; it makes no solvability
+  claim.
 - **Mutation property:** flip/copy/delete bytes in the scattered copies ⇒
   outcome ∈ {fail} ∪ inconclusive-with-reason, never `pass` with
   `unmatched_substantial_bytes == 0` unless the mutation was provably absorbed
@@ -1157,7 +1166,8 @@ Open questions (default answers chosen for v1; revisit before Phase 0 freeze):
    layouts including splits across ≥ 2 files) the verdict is additionally
    always `pass` — the scatter property test demonstrates this. Rare greedy
    overlap conflicts between distinct contents may conservatively `fail`;
-   labeled hard-packing fixtures pin that behavior as specified in §4.
+   labeled hard-packing fixtures pin their documented outcomes as specified
+   in §4.
 3. Deleting any substantial span without recreation yields `fail` with that
    span listed in `unmatched[]` with path, byte range, line range, length, and
    digest; the mutation property test demonstrates detection across randomized
