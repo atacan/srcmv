@@ -1,22 +1,26 @@
 name: Repository Context
 
 on:
-  push:
-    branches:
-      - main
+  # No path filter: cloc and tiktoken count every tracked file, so any
+  # pull request can move the report. Runs are cheap.
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
 
 concurrency:
-  # Serialize report updates; only the newest main push matters.
-  group: repository-context-${{ github.ref }}
+  # One live report per pull request; newer pushes supersede older runs.
+  group: repository-context-${{ github.event.number }}
   cancel-in-progress: true
 
 jobs:
   context:
-    name: Open repository context report PR
+    name: Report repository context size
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -24,39 +28,34 @@ jobs:
       - id: context
         uses: atacan/repository-context-action@bfcf64d671fef827a70bb14693ffb0d26d9ce541 # v1
         with:
-          # Repository rules require changes to land through pull requests,
-          # so the action must not push to main itself.
+          # The report is published as a comment; nothing is committed to
+          # the repository, so main's rules are never involved.
           commit: "false"
-      - name: Open or update the report pull request
-        if: steps.context.outputs.changed == 'true'
+      - name: Publish the report as a pull request comment
         env:
-          # GH_TOKEN created with the workflow's own GITHUB_TOKEN cannot
-          # trigger further workflows, so such a pull request reports no CI
-          # checks and must be merged by an administrator. Set the
-          # REPOSITORY_CONTEXT_TOKEN secret (a fine-grained PAT with
-          # Contents/PR write) to make the pull request run CI and merge
-          # like any human pull request.
-          GH_TOKEN: ${{ secrets.REPOSITORY_CONTEXT_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           REPORT: REPOSITORY_CONTEXT_SIZE.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          branch="bot/repository-context"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add -- "$REPORT"
-          git commit -m "chore: update repository context size"
-          # The bot branch is owned by this workflow alone; concurrency
-          # serializes its runs.
-          git push --force origin "$branch"
+          marker='<!-- repository-context-report -->'
+          body_file="$(mktemp)"
+          {
+            printf '%s\n\n' "$marker"
+            cat "$REPORT"
+          } >"$body_file"
 
-          open_pr="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
-          if [ -n "$open_pr" ]; then
-            echo "Pull request #$open_pr already open; pushed an update to it."
-            exit 0
+          # Replace this PR's previous report comment instead of stacking
+          # a new one on every push. The marker contains no characters that
+          # need jq escaping, so it is interpolated directly into the filter
+          # (gh api has no --arg passthrough for its embedded jq).
+          comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq "(.[] | select(.body | startswith(\"${marker}\")) | .id)" \
+            | head -n1)"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              -f body="$(cat "$body_file")" >/dev/null
+            echo "Updated report comment ${comment_id}"
+          else
+            gh pr comment "$PR_NUMBER" --body-file "$body_file"
           fi
-          gh pr create \
-            --head "$branch" \
-            --title "chore: update repository context size" \
-            --body "Automated refresh of \`REPOSITORY_CONTEXT_SIZE.md\` generated from ${GITHUB_SHA}." \
-            --fill-first
