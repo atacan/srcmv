@@ -15,6 +15,10 @@ on:
       - 'examples/**'
       - 'scripts/**'
       - 'docs/schema/**'
+      # The generated context report is checked when it arrives via pull
+      # request (e.g. from the repository-context workflow), but merging it
+      # does not rebuild main.
+      - 'REPOSITORY_CONTEXT_SIZE.md'
       - '.github/workflows/ci.yml'
   push:
     # Feature branches are covered by the pull_request trigger; direct pushes
