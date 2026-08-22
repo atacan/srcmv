@@ -1019,15 +1019,22 @@ Property tests (proptest, committed regressions), split by direction:
   contents compete for intersecting occurrences, with lengths at or above every
   floor so outcomes are verdict-visible, and with the expected outcome derived
   by hand-tracing §8.3–§8.5 before pinning. Canonical intersecting-regions
-  fixture, with the tree recipe pinned so the extracted region set — and the
-  golden ledger split — is reproducible from the text alone:
+  fixture, with a byte-exact tree recipe pinned so the extracted region set —
+  and the golden ledger split — is reproducible from the text alone:
   `U` is 96 bytes of distinct, non-repeating, terminator-free content that
   excludes the byte `y`; `r1 = U` (96 bytes) and
-  `r2 = U[79..96] ++ y×15` (32 bytes). Base file
-  `f1 = P ++ r1 ++ Q ++ r2 ++ R`, where `P`, `Q`, `R` are unique single-line
-  sentinel contents; head retains `f1 = P ++ Q ++ R` and creates `a.txt` with
-  content `C = U ++ y×15` (111 bytes). Extraction on the modified pair yields
-  exactly regions `{r1, r2}`. Trace: greedy longest-first matches `r1` at
+  `r2 = U[79..96] ++ y×15` (32 bytes); `P`, `Q`, `R` are unique
+  terminator-free single-line contents drawn from the same distinct alphabet
+  as `U`. Base file
+  `f1 = "P\n" ++ r1 ++ "\nQ\n" ++ r2 ++ "\nR\n"`; head retains
+  `f1' = "P\n\nQ\n\nR\n"` — a blank line where each removed region stood —
+  and creates `a.txt` with content `C = U ++ y×15` (111 bytes). Extraction:
+  byte-level trim consumes the common prefix `"P\n"` and suffix `"\nR\n"`
+  (stopping at `y` vs `\n`); anchoring on terminator-exclusive contents pairs
+  `Q ↔ Q`; gap separators belong to the gaps, so gap one trims to exactly
+  `r1` against an empty remainder and gap two trims to exactly `r2` the same
+  way — regions are exactly `{r1, r2}`, neither qualifying as formatting
+  (`W(region) ≠ []`). Matching: greedy longest-first matches `r1` at
   `C[0..96)` and consumes it; `r2`'s only occurrence `C[79..111)` intersects
   the consumed span so exact matching fails; in fragment matching every window
   of `r2`'s `U`-derived part verifies only inside consumed bytes and is
@@ -1196,8 +1203,9 @@ Open questions (default answers chosen for v1; revisit before Phase 0 freeze):
    (CI goldens prove it).
 10. Limits table added to `docs/resource-limits.md` with the house below/at/
     above test coverage; README documents the command and the external Git
-    worktree/archive recipe; the example runs green end-to-end via
-    `examples/run.sh 11-conservation-audit`.
+    worktree/archive recipe; the example runs green end-to-end via its
+    committed runner (`examples/run.sh 11-conservation-audit` or the
+    example's own script, whichever layout §15 settles on).
 11. Failure-exit mapping matches §12's table exactly, pinned by integration
     tests (including exit 8 for a missing root); completed audits exit 0 on
     all three verdicts.
