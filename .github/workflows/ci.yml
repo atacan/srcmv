@@ -1,8 +1,37 @@
 name: CI
 
+# Only run when files that can change the build/test outcome change.
+# When introducing new impactful paths (fixtures, schemas, CI-run scripts),
+# extend both path lists below.
 on:
   pull_request:
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'rustfmt.toml'
+      - 'tests/**'
+      - 'examples/**'
+      - 'scripts/**'
+      - 'docs/schema/**'
+      - '.github/workflows/ci.yml'
   push:
+    # Feature branches are covered by the pull_request trigger; direct pushes
+    # to main are the only pushes this workflow needs to test itself.
+    branches:
+      - main
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'rustfmt.toml'
+      - 'tests/**'
+      - 'examples/**'
+      - 'scripts/**'
+      - 'docs/schema/**'
+      - '.github/workflows/ci.yml'
 
 permissions:
   contents: read
