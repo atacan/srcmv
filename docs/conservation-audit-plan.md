@@ -484,13 +484,11 @@ the head tree (deleted files obviously cannot host content):
 Process regions in deterministic priority order: longer length first, ties by
 (source path bytes, then start offset ascending). For each region `r`:
 
-1. Probe the index with the first cold K-window of `r`: scan forward through
-   `r` to the first non-hot window. **Neighbor fallback:** when a probed
-   window is hot, continue to the nearest cold window on either side within
-   `r`; hot stretches are matched through the extensions those neighboring
-   cold anchors induce, byte-verified exactly like any candidate. If no window
-   of `r` is cold after this scan is exhausted, classify `r`
-   `ambiguous_common` per §8.6 — never silently skip it.
+1. Probe with any cold K-window of `r` — for determinism, the first found by
+   scanning forward; since every occurrence of `r` contains all of `r`'s
+   windows, the choice does not affect the candidate set. If `r` has no cold
+   window at all, classify `r` `ambiguous_common` per §8.6 — never silently
+   skip it.
 2. Verify candidates in ascending `(path, offset)` order by comparing all
    `r.len()` bytes. Skip candidates whose span intersects any already-consumed
    interval in that file (§8.6) — overlap means the occurrence is spent.
@@ -583,7 +581,9 @@ Consumption is the soundness core:
   instead, pushing the verdict toward `inconclusive`. Default off; reviewers
   who need copy-identity claims should enable it.
 - **`ambiguous_common` is verdict-visible.** A region whose every window is
-  hot after the §8.3 forward scan cannot be anchored, and no byte of it may be
+  hot — i.e., which has no cold window at all after §8.3 step 1, including
+  neighbor fallback per §8.2's hot-bucket rule — cannot be anchored, and no
+  byte of it may be
   credited or forgiven: its full length enters the ledger as
   `ambiguous_common_bytes`, and its presence forces `verdict = INCONCLUSIVE`
   with reason `ambiguous_common` (§9.1–§9.3). This is deliberately stricter
@@ -896,10 +896,16 @@ Field rules:
 - Destinations within one region are ordered by `(path, offset)`; fragments
   appear as separate destination entries, making splits visible.
 - `formatting[]` entries use the same record shape as `unmatched[]` with
-  `status: "formatting_only"`, optionally annotated with the paired
-  destination range under line-edge normalization when one exists (gap-derived
-  regions annotate their counterpart; fallback regions annotate the whole
-  post-trim after-middle).
+  `status: "formatting_only"`, optionally annotated with a `paired_destination`
+  object carrying exactly `{path, byte_range}` — it deliberately omits
+  `line_range` — under line-edge normalization when a counterpart exists
+  (gap-derived regions annotate their counterpart; fallback regions annotate
+  the whole post-trim after-middle).
+- The closed `status` vocabulary is `conserved`, `unmatched_substantial`, and
+  `formatting_only`. Records are emitted for those three classifications;
+  `insubstantial_residue` and `ambiguous_common` bytes are reported through
+  totals and counts only (`insubstantial_residue_bytes`,
+  `ambiguous_common_bytes`, `ambiguous_common_regions`).
 - Digests enable reviewers to verify any claim independently:
   `sha256(head_file[dest_range]) == sha256(base_file[src_range])`.
 
@@ -911,7 +917,7 @@ fragments pass through `escape_terminal_text`:
 ```text
 conservation audit v1
 base:  /tmp/base  (142 files, 3204551 bytes)
-head:  /tmp/head  (143 files, 3211002 bytes)
+head:  @list.txt  (manifest; 143 files, 3211002 bytes)
 verdict: FAIL
 removed 12344 B | conserved 12002 B | unmatched 110 B | formatting 210 B | new 1905 B
 unmatched regions (1):
