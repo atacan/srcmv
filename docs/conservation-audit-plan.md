@@ -93,9 +93,9 @@ A `pass` verdict means:
 > Every maximal byte region that the before tree contained and the after tree
 > lost was found, in exact byte equality, at some consumed location in the
 > after tree, under one-to-one accounting, with all work completed within
-> configured bounds — except for three explicitly reported carve-outs that do
+> configured bounds — except for two explicitly reported carve-outs that do
 > not defeat a pass by default: bytes below the substantiality floor
-> (`insubstantial_residue`, §9.4) and whitespace/EOL-equivalent rewrites
+> (`insubstantial_residue`, §9.4) and line-edge-equivalent rewrites
 > (`formatting_only`, §8.7). Every other ledger term is zero for a pass:
 > no `unmatched_substantial`, no `ambiguous_common`, no `unanalyzed` bytes.
 
@@ -326,7 +326,12 @@ Skip-versus-error boundary, stated mechanically:
   so any skip forces that verdict downstream.
 - **Everything else stays a hard error** through the standard envelope:
   root-level failures (missing/unreadable root, canonicalization),
-  symlink/special-file rejection, limit violations, and manifest problems.
+  symlink/special-file rejection, limit violations, and manifest problems
+  (including missing entries — knowable before any analysis, so the audit
+  fails fast rather than reporting inconclusive). The asymmetry versus
+  per-file skips is deliberate: policy violations and structural problems
+  abort, while mid-read instability of otherwise-valid content merely makes
+  results unreliable.
 - Limit-set discipline matches house rules exactly: trusted *user
   configuration* may lower limits but never raise them; trusted *test*
   constructors may pass arbitrary values (including `u64::MAX`) for boundary
@@ -426,8 +431,11 @@ the head tree (deleted files obviously cannot host content):
   `--min-substantial-bytes ≥ --min-fragment-bytes`. Every matchable span is
   therefore ≥ `K` bytes and contains at least one full index window, so
   probing is always defined. Whole regions shorter than `K` are necessarily
-  below the substantiality floor (≥ 16) and flow to residue accounting
-  without probing.
+  below the substantiality floor (≥ 16): they are never probed and their full
+  length flows directly to the `insubstantial_residue` ledger term (§8.5,
+  §9.2), except that gap-derived modified-pair regions are first offered to
+  the formatting check of §8.7, which runs before any length-based
+  short-circuit.
 - **Near-tail windows:** a window exists at every offset with
   `offset + K ≤ file_len`. An occurrence flush against EOF is still indexed
   through its interior windows; candidate verification then reads exactly
@@ -556,28 +564,42 @@ Consumption is the soundness core:
 
 - Byte purity is preserved: a CRLF→LF rewrite or indent change is *not* a
   conservation match. Exactness is never weakened by an option.
-- A gap-derived region (modified pair, §8.1 step 4) whose bytes equal its
-  paired after-side remainder under **line-edge normalization** is classified
-  `formatting_only` instead of `unmatched_substantial`, with the counterpart
-  annotated as the rewrite site. Line-edge normalization means: replace every
-  CRLF and lone CR with LF on both sides, split on LF, trim leading and
-  trailing ASCII whitespace from every line, then require the resulting line
-  sequences to be exactly equal. This catches re-indentation, trailing-space
-  churn, EOL conversion, and final-newline additions while deliberately *not*
-  equating intra-line spacing changes or deleted line breaks (joining two
-  statements changes the line sequence and stays unmatched).
+- **Sequencing is normative:** the formatting check runs at extraction time,
+  immediately after gap trimming (§8.1 step 4) and *before* any probing,
+  length-based short-circuit, or matching. Every gap-derived modified-pair
+  region is compared with its paired insertion context under line-edge
+  normalization (below). Qualifying regions contribute their **full length**
+  to the `formatting_only` ledger term and never enter §8.3/§8.5, so no byte
+  is ever counted twice (§9.2 holds by construction). Non-qualifying regions
+  proceed through exact and fragment matching normally; their post-matching
+  residue is classified per §8.5.
+- **Line-edge normalization** is the transformation `T`: replace every CRLF
+  and lone CR with LF, split on LF, strip leading and trailing ASCII
+  whitespace from each line, then join the lines with LF. A region qualifies
+  iff `T(region) == T(paired_remainder)`. This catches re-indentation,
+  trailing-space churn, EOL conversion, and final-newline additions —
+  including the degenerate gaps of a pure EOL conversion, where each removed
+  region is a single CR byte whose `T` image is empty and equals its empty
+  remainder. It deliberately does *not* equate intra-line spacing changes or
+  deleted line breaks: joining two statements changes the joined sequence and
+  stays unmatched.
 - Applicability is narrow by construction: deleted-file regions and fallback
   regions carry no paired remainder (§8.1) and are never formatting-
   classified. Known caveat, documented for reviewers: content inside multi-
   line string/template literals whose lines begin or end with spaces can be
   misclassified as formatting; `--count-formatting` restores strict failure
-  semantics for reviewers who care.
+  semantics for reviewers who care. A second consequence of extraction-time
+  classification is deliberate under-crediting: a formatting-equivalent block
+  that also survives verbatim elsewhere is reported as rewritten rather than
+  conserved; the extra copy surfaces in new content instead.
 - Formatting bytes count toward neither conservation nor failure by default;
   they appear in their own totals and listings so rewritten-but-equivalent
   edits are clearly visible. `--count-formatting` promotes them to failures.
-- Partial edits naturally decompose: the anchor/gap extraction trims to exact
-  changed bytes, the untouched remainder matches exactly, and the edited tail
-  lands in residue or formatting classification according to its content.
+- Partial edits decompose under this ordering without special cases: the
+  anchor/gap extraction trims to exact changed bytes; an edited tail whose
+  bytes equal its counterpart under `T` qualifies at extraction time;
+  anything else proceeds to matching, and only genuinely unmatched residue
+  remains.
 
 ### 8.8 New content
 
@@ -646,7 +668,6 @@ Each carries a structured reason string in `report.inconclusive_reasons[]`:
 - `unreadable_input_skipped` — one or more files were skipped during ingestion
   (`SkippedInput`, §7) because they vanished mid-walk or failed stable-read
   verification; the tree changed underneath, so no verdict is reliable;
-- `manifest_entry_missing`;
 - `strict_uniqueness_ambiguity` — only under `--strict-uniqueness`;
 - `ambiguous_common` — at least one region could not be anchored anywhere in
   the head tree after hot-bucket suppression and neighbor-window fallback
@@ -660,11 +681,14 @@ Each carries a structured reason string in `report.inconclusive_reasons[]`:
 `--min-substantial-bytes` (default 32) defines the smallest residue worth
 failing over. Defaults chosen so incidental churn (an import line tweak, a
 brace) surfaces in reports without flipping branch audits to `fail`, while any
-real block survives the floor. The floor applies only to *residue*; whole
-regions smaller than the floor are still matched and reported normally.
-Per §6.1 the floor cannot be set below `--min-fragment-bytes`, which cannot be
-set below `K = 16`; maximal practical strictness is therefore 16-byte floors,
-tightened further with `--count-formatting` and `--strict-uniqueness`.
+real block survives the floor. The floor applies only to residue and to whole
+regions too short to probe: a region containing at least one index window
+(length ≥ `K`, §8.2) is matched and reported normally regardless of its size,
+while shorter regions skip probing entirely — after the §8.7 formatting check
+— and land in `insubstantial_residue`. Per §6.1 the floor cannot be set below
+`--min-fragment-bytes`, which cannot be set below `K = 16`; maximal practical
+strictness is therefore 16-byte floors, tightened further with
+`--count-formatting` and `--strict-uniqueness`.
 
 ### 9.5 Binary content lifecycle
 
@@ -861,7 +885,7 @@ registry additions:
 
 | Exit | Codes used by the audit |
 |---:|---|
-| 2 | `INVALID_CLI`, `INVALID_REQUEST` (bad manifest syntax, bad option values) |
+| 2 | `INVALID_CLI`, `INVALID_REQUEST` (bad manifest syntax, missing manifest entries, bad option values) |
 | 4 | `RESOURCE_LIMIT_EXCEEDED`, `SYMLINK_NOT_ALLOWED`, `UNSUPPORTED_FILE_TYPE` |
 | 8 | `IO_ERROR` (root missing/unreadable — Internal category per the frozen registry), `INTERNAL_ERROR` |
 
@@ -954,7 +978,9 @@ Unit tests (each module, `*_should_*` names):
 - consumption: disjoint-interval invariant under adversarial orders;
 - normalization: line-edge equivalence classes (indent churn, EOL swap,
   final-newline) and near-misses that must NOT classify (intra-line spacing,
-  deleted line breaks);
+  deleted line breaks); a lone-CR region shorter than `K` from a pure
+  CRLF→LF conversion must classify `formatting_only` and flip the audit to
+  `fail` under `--count-formatting`;
 - verdict truth table incl. every inconclusive reason; §9.2 ledger identity
   recomputation incl. `ambiguous_common` and `unanalyzed` terms.
 
@@ -970,10 +996,19 @@ Property tests (proptest, committed regressions), split by direction:
   formatting/residue. Friendly packings only: scattered copies never overlap
   each other, which is the domain where greedy matching is complete.
 - **Labeled hard-packing fixtures:** deterministic cases where distinct region
-  contents compete for intersecting occurrences (e.g., `r1 = "0123456789"`,
-  `r2 = "89abc"`, one surviving `"0123456789abc"` plus one escape copy of
-  `r1` elsewhere); assert the documented conservative outcome (`fail` or
-  `inconclusive`, never a fabricated pass) rather than promising solvability.
+  contents compete for intersecting occurrences, with lengths above every
+  floor so outcomes are verdict-visible. Canonical fixture: base file `f1`
+  removes `r1` (48 bytes: `"0123456789abcdef"` repeated three times) and
+  `r2` (32 bytes: the last 32 bytes of the 64-byte composite
+  `C = r1 ++ "y"×16`, i.e., `C[16..48]`, which intersects `r1`'s span); head
+  contains `C` once inside `a.txt` at a low offset plus one escape copy of
+  `r1` inside `z.txt` (sorting after `a.txt`). Greedy longest-first takes
+  `r1`'s ascending-first candidate — the intersecting copy inside `C` — after
+  which `r2`'s only occurrence overlaps consumed bytes, leaving 32 bytes of
+  substantial residue ⇒ `fail`, although the perfect assignment (`r1 → z.txt`,
+  `r2 → C[16..48]`) exists. Assert the documented conservative outcome
+  (`fail`, or `inconclusive` under strict options), never a fabricated pass;
+  never promise solvability.
 - **Mutation property:** flip/copy/delete bytes in the scattered copies ⇒
   outcome ∈ {fail} ∪ inconclusive-with-reason, never `pass` with
   `unmatched_substantial_bytes == 0` unless the mutation was provably absorbed
@@ -995,7 +1030,9 @@ Integration tests (`crates/srcmv-cli/tests/audit_cli.rs`, real-binary style of
 - new file/deleted file accounting; empty trees; identical trees;
 - symlink in tree → exit 4; oversized file with lowered limits → exit 4;
 - missing root → exit 8 via `IO_ERROR` (pins the §12 table against drift);
-- manifest mode happy path, missing entry, bad syntax;
+- manifest mode happy path; missing entry and bad syntax are hard errors —
+  exit 2 via `INVALID_REQUEST` (missing entries are knowable before any
+  analysis, so the audit fails fast rather than reporting inconclusive);
 - flag-less invocation prints the human summary to stdout and nothing to
   stderr; error rendering follows `run_with_io`'s `--json` pre-scan;
 - `--json` single-line validity, schema conformance (via `jsonschema`
@@ -1006,10 +1043,11 @@ Integration tests (`crates/srcmv-cli/tests/audit_cli.rs`, real-binary style of
 Golden vectors: `tests/golden/conservation-audit-v1/` generated from fixtures
 in `tests/fixtures/conservation/`; CI compares full serialized reports.
 Goldens pin JSON only (human output embeds absolute temp paths by design).
-The set covers the normative option matrix:
+The set covers the documented scenario matrix:
 `pass.json`, `pass-pairing-ambiguous.json`, `pass-formatting.json`,
 `fail.json`, `fail-count-formatting.json`, `manifest-mode.json`,
-`inconclusive-work-budget.json`, `inconclusive-report-truncated.json`.
+`inconclusive-work-budget.json`, `inconclusive-report-truncated.json`,
+`inconclusive-ambiguous-common.json`, `inconclusive-strict-uniqueness.json`.
 
 Boundary suite (house style): below/at/above every `AuditTreeLimits` and
 budget field using lowered constructors, asserting fail-closed behavior.
@@ -1021,8 +1059,8 @@ no panic plus the §9.2 invariant. Regression seeds are appended to
 `tests/fuzz-regressions/seeds.json` with a defined encoding for the triple —
 hex-concatenated corpus and region plus an options bitmask — and consumed by a
 named proptest campaign,
-`conservation_engine_fuzz_regression_should_hold_invariants`, runnable via the
-existing `cargo test --workspace --all-features fuzz_regression` and
+`conservation_engine_fuzz_regression_preserves_ledger_invariant`, runnable via
+the existing `cargo test --workspace --all-features fuzz_regression` and
 `PROPTEST_CASES=4096` workflow.
 
 Example: `examples/11-conservation-audit/` — scripted before/expected trees
@@ -1111,7 +1149,7 @@ Open questions (default answers chosen for v1; revisit before Phase 0 freeze):
 7. The JSON report validates against
    `docs/schema/conservation-audit-v1/report.schema.json`, is exactly one
    line, and is byte-identical across repeated runs and across the golden
-   fixtures covering the full option matrix (§15).
+   fixtures covering the documented scenario set (§15).
 8. The engine performs zero syscalls by construction: it accepts only borrowed
    tree slices, `srcmv-core` gains no `std::fs` usage or new dependencies
    (enforced by the existing unsafe-audit-style source-scan script extended to
