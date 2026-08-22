@@ -395,20 +395,23 @@ Pipeline per changed pair `(before, after)`:
    standard patience-stack reconstruction, so the anchors are deterministic.
    Unique-line anchoring is O(n) expected with a hash map plus O(a log a) for
    the LIS.
-4. Between consecutive anchors lies a *gap*: before-gap bytes and after-gap
-   bytes. For each gap, trim common byte prefix/suffix of the two gap slices;
-   whatever remains on the before side is one candidate removed region (the
-   after-side remainder is recorded as this region's paired insertion context,
-   used only by the formatting check in §8.7). Only gap-derived regions from
-   modified pairs carry paired context; deleted-file and fallback regions have
-   none and are therefore never formatting-classified.
-5. **Fallback applies per maximal anchor-free stretch**, not per gap size: if a
-   stretch of the before middle has no enclosing anchor pair on both sides
-   (anchors too sparse to bracket it) or the anchor pass exceeds its work
-   budget, that stretch's before-span becomes one coarse removed region.
-   Bracketed gaps are unaffected regardless of their size — a large but
-   bracketed gap costs only linear trimming. Coarseness costs match precision,
-   never soundness, because matching happens globally next.
+4. **The start and end of each middle act as sentinel anchor boundaries:**
+    gaps comprise the stretch from the start boundary to the first selected
+    anchor, between consecutive anchors, and from the last anchor to the end
+    boundary. Each gap has before-gap bytes and after-gap bytes. For each
+    gap, trim common byte prefix/suffix of the two gap slices; whatever
+    remains on the before side is one candidate removed region (the after-side
+    remainder is recorded as this region's paired insertion context, used only
+    by the formatting check in §8.7). Only gap-derived regions from modified
+    pairs carry paired context; deleted-file and fallback regions have none
+    and are therefore never formatting-classified.
+5. **Fallback applies only when anchoring produced no usable brackets** — zero
+    anchor pairs in the middle, or the anchor pass exceeded its work budget —
+    in which case the entire before-middle becomes one coarse removed region
+    (equivalently, one gap between the sentinels). Bracketed gaps are handled
+    by step 4 regardless of their size — a large but bracketed gap costs only
+    linear trimming, never a size-based fallback. Coarseness costs match
+    precision, never soundness, because matching happens globally next.
 6. Deleted files contribute one region covering the whole file (empty files
    contribute nothing); such regions carry no paired insertion context.
 
@@ -447,8 +450,8 @@ the head tree (deleted files obviously cannot host content):
   through its interior windows; candidate verification then reads exactly
   `region_len` bytes, so end-of-file positions match correctly.
 - **Hot-bucket suppression:** any key whose position vector exceeds
-  `hot_bucket_limit` (default 64) is marked hot and excluded from anchoring.
-  This makes pathological inputs (runs of `' '`, minified bundles, lockfiles)
+  `hot_bucket_limit` (default 64) is marked hot and excluded from probing
+  (candidate generation; distinct from §8.1's line anchoring). This makes pathological inputs (runs of `' '`, minified bundles, lockfiles)
   linear instead of quadratic; hot stretches can still be matched through
   neighboring cold windows (§8.3–§8.5). Note that hotness depends on head-tree
   frequency: identical removed content may anchor cleanly in one repository
@@ -474,7 +477,7 @@ Process regions in deterministic priority order: longer length first, ties by
    interval in that file (§8.6) — overlap means the occurrence is spent.
 3. First verified, unconsumed candidate wins: mark `[start, start+len)`
    consumed, record the match, continue with the next region.
-4. If candidates existed but none verified unconsumed, defer `r` to fragment
+4. If no candidate existed or none verified unconsumed, defer `r` to fragment
    matching.
 
 Greedy priority is complete for identical duplicates (every copy of duplicated
@@ -508,7 +511,9 @@ fragments:
    consumed or already-fragment-matched byte.
 2. Accept the longest verified extension ≥ `--min-fragment-bytes` (default 16
    = `K`, so every accepted fragment contained at least one full probe window),
-   consume its head span, jump `o` past the fragment's region-side end.
+   breaking length ties by ascending `(path, offset)` of the head-side
+   candidate start, mirroring §8.3 step 2. Consume its head span, jump `o`
+   past the fragment's region-side end.
 3. If no acceptable extension, advance `o` by one byte (bounded scans only;
    every compared byte charges work units).
 4. Terminate at region end or when the global matching work budget is
