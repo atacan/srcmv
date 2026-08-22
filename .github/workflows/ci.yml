@@ -15,7 +15,10 @@ on:
       - 'examples/**'
       - 'scripts/**'
       - 'docs/schema/**'
-      - '.github/workflows/ci.yml'
+      # Any workflow change can alter what CI does; matching all of them
+      # also guarantees the required checks are reported for workflow-only
+      # pull requests instead of being skipped outright.
+      - '.github/workflows/**'
   push:
     # Feature branches are covered by the pull_request trigger; direct pushes
     # to main are the only pushes this workflow needs to test itself.
@@ -31,7 +34,10 @@ on:
       - 'examples/**'
       - 'scripts/**'
       - 'docs/schema/**'
-      - '.github/workflows/ci.yml'
+      # Any workflow change can alter what CI does; matching all of them
+      # also guarantees the required checks are reported for workflow-only
+      # pull requests instead of being skipped outright.
+      - '.github/workflows/**'
 
 permissions:
   contents: read
