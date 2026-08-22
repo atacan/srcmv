@@ -1,0 +1,29 @@
+[package]
+name = "srcmv-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.97"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+srcmv-core = { path = ".." }
+
+[[bin]]
+name = "conservation_matcher"
+path = "fuzz_targets/conservation_matcher.rs"
+test = false
+doc = false
+bench = false
+
+# Keep nightly fuzz tooling and its lockfile independent of the stable parent.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
