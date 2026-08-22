@@ -17,6 +17,10 @@ on:
       - 'docs/schema/**'
       - '.github/workflows/ci.yml'
   push:
+    # Feature branches are covered by the pull_request trigger; direct pushes
+    # to main are the only pushes this workflow needs to test itself.
+    branches:
+      - main
     paths:
       - '**/*.rs'
       - '**/Cargo.toml'
