@@ -401,13 +401,16 @@ Pipeline per changed pair `(before, after)`:
     boundary. Each gap has before-gap bytes and after-gap bytes. For each
     gap, trim common byte prefix/suffix of the two gap slices; whatever
     remains on the before side is one candidate removed region (the after-side
-    remainder is recorded as this region's paired insertion context, used only
-    by the formatting check in §8.7). Only deleted-file regions lack paired
+    remainder is recorded as this region's paired insertion context; it feeds
+    the §8.7 formatting comparison and the §8.8 insertion-span set). Only
+    deleted-file regions lack paired
     context — there is no counterpart tree — so they are never
     formatting-classified.
 5. **Fallback applies only when anchoring produced no usable brackets** — zero
     anchor pairs in the middle, or the anchor pass exceeded its internal effort
-    cap (see below) — in which case the entire before-middle becomes one coarse
+    cap (a fixed constant expressed in extraction work units, pinned in §10,
+    lowerable via test constructors like every other limit) — in which case the
+    entire before-middle becomes one coarse
     removed region, equivalently one gap between the sentinels. Its after-side
     remainder — the post-trim after-middle — is recorded as the region's paired
     insertion context exactly as in step 4, so fallback regions participate in
@@ -419,7 +422,9 @@ Pipeline per changed pair `(before, after)`:
     charges a soft effort cap against the extraction pool; breaching the cap
     degrades only that file pair to the coarse fallback without exhausting the
     pool, while genuine extraction-pool exhaustion remains governed by §10's
-    stop-and-`unanalyzed` rule and preempts fallback.
+    stop-and-`unanalyzed` rule and preempts fallback. An empty before-side
+    (pure insertion) yields no region; its remainder feeds only the
+    insertion-span set.
 6. Deleted files contribute one region covering the whole file (empty files
    contribute nothing); such regions carry no paired insertion context.
 
@@ -747,6 +752,7 @@ may lower but not raise, matching house rules):
 | Index memory | 2 GiB (effectively bounded by tree bytes) |
 | Hot-bucket positions | 64 |
 | Extraction work units | 200,000,000 (≈ bytes scanned/hashed) |
+| Anchor-pass effort cap | 50,000,000 work units per file pair (charged to the extraction pool; breaching degrades that pair to fallback) |
 | Matching work units | 400,000,000 (≈ bytes compared/probed) |
 | Report regions listed | 2,000 (largest first, then source order) |
 | Report new-content spans | 50 |
@@ -867,6 +873,11 @@ Field rules:
   `removed_bytes = Σ ledger terms` holds on every report.
 - Destinations within one region are ordered by `(path, offset)`; fragments
   appear as separate destination entries, making splits visible.
+- `formatting[]` entries use the same record shape as `unmatched[]` with
+  `status: "formatting_only"`, optionally annotated with the paired
+  destination range under line-edge normalization when one exists (gap-derived
+  regions annotate their counterpart; fallback regions annotate the whole
+  post-trim after-middle).
 - Digests enable reviewers to verify any claim independently:
   `sha256(head_file[dest_range]) == sha256(base_file[src_range])`.
 
