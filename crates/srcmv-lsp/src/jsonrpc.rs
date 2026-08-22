@@ -434,6 +434,18 @@ impl FrameDecoder {
         }
     }
 
+    /// Reports whether a frame has been partially decoded and awaits more input.
+    ///
+    /// This is `false` between frames: a fresh decoder and a decoder that just
+    /// completed a body both report `false`.
+    #[must_use]
+    pub fn is_mid_frame(&self) -> bool {
+        match &self.state {
+            DecoderState::Header(header) => !header.is_empty(),
+            DecoderState::Body { .. } => true,
+        }
+    }
+
     /// Consumes an available input chunk and returns every completed body.
     ///
     /// An empty body is a completed frame. Empty input is a no-op. After any

@@ -19,9 +19,14 @@ use srcmv_core::{
     SourceSelection, WorkspaceRelativePath,
 };
 
+mod outline;
 mod selection;
 mod selection_capabilities;
 
+pub use outline::{
+    OUTLINE_PROTOCOL_VERSION, OutlineErrorCategory, OutlineErrorCode, OutlineErrorDto,
+    OutlineProtocolError, OutlineResponse, OutlineSymbolDto, to_outline_json_line,
+};
 pub use selection::{
     SELECTION_PROTOCOL_VERSION, SelectionByteSelectorDto, SelectionErrorCategory,
     SelectionErrorCode, SelectionErrorDto, SelectionExtentDto, SelectionKnownSymbolKindDto,

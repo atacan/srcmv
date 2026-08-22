@@ -57,6 +57,18 @@ impl SelectionLspPositionDto {
     pub const fn new(line: u32, character: u32) -> Self {
         Self { line, character }
     }
+
+    /// Returns the raw zero-based line.
+    #[must_use]
+    pub const fn line(self) -> u32 {
+        self.line
+    }
+
+    /// Returns the raw zero-based character offset.
+    #[must_use]
+    pub const fn character(self) -> u32 {
+        self.character
+    }
 }
 
 /// One raw zero-based LSP range retained for audit output.
@@ -71,6 +83,18 @@ impl SelectionLspRangeDto {
     #[must_use]
     pub const fn new(start: SelectionLspPositionDto, end: SelectionLspPositionDto) -> Self {
         Self { start, end }
+    }
+
+    /// Returns the raw range start.
+    #[must_use]
+    pub const fn start(self) -> SelectionLspPositionDto {
+        self.start
+    }
+
+    /// Returns the raw range end.
+    #[must_use]
+    pub const fn end(self) -> SelectionLspPositionDto {
+        self.end
     }
 }
 
@@ -777,29 +801,53 @@ impl Error for SelectionProtocolError {}
 /// Returns `SELECTION_INTERNAL_ERROR` if JSON serialization fails, or
 /// `LSP_RESOURCE_LIMIT_EXCEEDED` if the exact serialized line is too large.
 pub fn to_selection_json_line<T: Serialize>(value: &T) -> Result<String, SelectionProtocolError> {
-    let maximum_payload_bytes = usize::try_from(MAX_RESPONSE_BYTES.saturating_sub(1))
-        .map_err(|_| selection_serialization_error())?;
-    let mut output = BoundedSelectionJson::new(maximum_payload_bytes);
+    match write_bounded_json_line(value, MAX_RESPONSE_BYTES) {
+        Ok(bytes) => String::from_utf8(bytes).map_err(|_| selection_serialization_error()),
+        Err(BoundedJsonLineFailure::ResponseLimit(actual)) => {
+            Err(selection_response_limit_error(actual))
+        }
+        Err(BoundedJsonLineFailure::Serialization) => Err(selection_serialization_error()),
+    }
+}
+
+/// Why a bounded single-line JSON serialization stopped early.
+#[derive(Debug)]
+pub(crate) enum BoundedJsonLineFailure {
+    /// The value could not be serialized as UTF-8 JSON.
+    Serialization,
+    /// The exact serialized line would exceed the response limit; carries the
+    /// attempted byte count for error context.
+    ResponseLimit(u64),
+}
+
+/// Serializes one JSON value plus exactly one trailing LF under an exact
+/// total-byte bound, shared by every versioned command surface.
+pub(crate) fn write_bounded_json_line<T: Serialize>(
+    value: &T,
+    maximum_response_bytes: u64,
+) -> Result<Vec<u8>, BoundedJsonLineFailure> {
+    let maximum_payload_bytes = usize::try_from(maximum_response_bytes.saturating_sub(1))
+        .map_err(|_| BoundedJsonLineFailure::Serialization)?;
+    let mut output = BoundedJsonWriter::new(maximum_payload_bytes);
     if serde_json::to_writer(&mut output, value).is_err() {
         return Err(if output.exceeded {
-            selection_response_limit_error(output.attempted_bytes)
+            BoundedJsonLineFailure::ResponseLimit(output.attempted_bytes)
         } else {
-            selection_serialization_error()
+            BoundedJsonLineFailure::Serialization
         });
     }
     output.bytes.push(b'\n');
-
-    String::from_utf8(output.bytes).map_err(|_| selection_serialization_error())
+    Ok(output.bytes)
 }
 
-struct BoundedSelectionJson {
+struct BoundedJsonWriter {
     bytes: Vec<u8>,
     maximum_payload_bytes: usize,
     attempted_bytes: u64,
     exceeded: bool,
 }
 
-impl BoundedSelectionJson {
+impl BoundedJsonWriter {
     fn new(maximum_payload_bytes: usize) -> Self {
         Self {
             bytes: Vec::new(),
@@ -810,20 +858,20 @@ impl BoundedSelectionJson {
     }
 }
 
-impl Write for BoundedSelectionJson {
+impl Write for BoundedJsonWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         let attempted_payload = self.bytes.len().checked_add(buffer.len());
         let Some(attempted_payload) = attempted_payload else {
             self.exceeded = true;
             self.attempted_bytes = u64::MAX;
-            return Err(io::Error::other("selection response limit exceeded"));
+            return Err(io::Error::other("response limit exceeded"));
         };
         if attempted_payload > self.maximum_payload_bytes {
             self.exceeded = true;
             self.attempted_bytes = u64::try_from(attempted_payload)
                 .unwrap_or(u64::MAX)
                 .saturating_add(1);
-            return Err(io::Error::other("selection response limit exceeded"));
+            return Err(io::Error::other("response limit exceeded"));
         }
         self.bytes.extend_from_slice(buffer);
         Ok(buffer.len())

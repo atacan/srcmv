@@ -272,7 +272,7 @@ fn execute_inner(
     }
 }
 
-fn selection_snapshot_limits() -> SnapshotLimits {
+pub(crate) fn selection_snapshot_limits() -> SnapshotLimits {
     SnapshotLimits::new(
         MAX_PATH_BYTES,
         1,
@@ -282,7 +282,6 @@ fn selection_snapshot_limits() -> SnapshotLimits {
         MAX_LINE_INDEX_MEMORY,
     )
 }
-
 fn validate_query(
     arguments: &SelectArgs,
     kind: Option<KnownSymbolKind>,
@@ -344,7 +343,8 @@ fn parse_kind(value: Option<&str>) -> Result<Option<KnownSymbolKind>, SelectionE
     })
 }
 
-fn load_optional_configuration() -> Result<Option<UserConfiguration>, SelectionErrorDto> {
+pub(crate) fn load_optional_configuration() -> Result<Option<UserConfiguration>, SelectionErrorDto>
+{
     let explicit = env::var_os(srcmv_lsp::config::CONFIGURATION_PATH_ENVIRONMENT_VARIABLE);
     let Some(path) = user_configuration_path(explicit.as_deref()) else {
         return Ok(None);
@@ -358,16 +358,12 @@ fn load_optional_configuration() -> Result<Option<UserConfiguration>, SelectionE
     }
 }
 
-fn resolve_selection_server(
+pub(crate) fn resolve_selection_server(
     workspace: &Workspace,
     snapshot: &FileSnapshot,
     arguments: &SelectArgs,
     configuration: Option<&UserConfiguration>,
 ) -> Result<ResolvedServer, SelectionErrorDto> {
-    let extension = Path::new(&snapshot.path.value)
-        .extension()
-        .and_then(OsStr::to_str)
-        .unwrap_or("");
     let selection = if let Some(program) = arguments.server_program.as_deref() {
         ServerSelection::Program {
             program,
@@ -379,6 +375,23 @@ fn resolve_selection_server(
     } else {
         ServerSelection::Automatic
     };
+    resolve_server_for_source(workspace, snapshot, selection, configuration)
+}
+
+/// Resolves one trusted server descriptor for an already acquired snapshot.
+///
+/// Shared by every read-only language-server surface; the caller supplies its
+/// own explicit-program, identifier, or automatic selection policy.
+pub(crate) fn resolve_server_for_source(
+    workspace: &Workspace,
+    snapshot: &FileSnapshot,
+    selection: ServerSelection<'_>,
+    configuration: Option<&UserConfiguration>,
+) -> Result<ResolvedServer, SelectionErrorDto> {
+    let extension = Path::new(&snapshot.path.value)
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or("");
     resolve_server(
         configuration,
         ResolutionRequest {
@@ -391,7 +404,7 @@ fn resolve_selection_server(
     .map_err(map_config_error)
 }
 
-fn session_deadlines(server: &ResolvedServer) -> SessionDeadlines {
+pub(crate) fn session_deadlines(server: &ResolvedServer) -> SessionDeadlines {
     let shutdown = Duration::from_secs(5);
     let cleanup = Duration::from_secs(5);
     let scheduling_allowance = Duration::from_secs(10);
@@ -519,14 +532,16 @@ fn build_match(
     ))
 }
 
-fn protocol_lsp_range(range: Range) -> SelectionLspRangeDto {
+pub(crate) fn protocol_lsp_range(range: Range) -> SelectionLspRangeDto {
     SelectionLspRangeDto::new(
         SelectionLspPositionDto::new(range.start.line, range.start.character),
         SelectionLspPositionDto::new(range.end.line, range.end.character),
     )
 }
 
-fn protocol_position_encoding(value: SupportedPositionEncoding) -> SelectionPositionEncodingDto {
+pub(crate) fn protocol_position_encoding(
+    value: SupportedPositionEncoding,
+) -> SelectionPositionEncodingDto {
     match value {
         SupportedPositionEncoding::Utf8 => SelectionPositionEncodingDto::Utf8,
         SupportedPositionEncoding::Utf16 => SelectionPositionEncodingDto::Utf16,
@@ -534,7 +549,7 @@ fn protocol_position_encoding(value: SupportedPositionEncoding) -> SelectionPosi
     }
 }
 
-fn protocol_symbol_kind(value: NormalizedSymbolKind) -> SelectionSymbolKindDto {
+pub(crate) fn protocol_symbol_kind(value: NormalizedSymbolKind) -> SelectionSymbolKindDto {
     match value {
         NormalizedSymbolKind::Known(kind) => protocol_known_kind(kind).into(),
         NormalizedSymbolKind::Unknown(_) => SelectionSymbolKindDto::Unknown,
@@ -618,7 +633,7 @@ fn response_size_error() -> SelectionErrorDto {
     )
 }
 
-fn validate_server_identity(
+pub(crate) fn validate_server_identity(
     value: &Option<String>,
     resource: &'static str,
 ) -> Result<(), SelectionErrorDto> {
@@ -637,7 +652,7 @@ fn validate_server_identity(
     }
 }
 
-fn map_config_error(error_value: ConfigError) -> SelectionErrorDto {
+pub(crate) fn map_config_error(error_value: ConfigError) -> SelectionErrorDto {
     let resource = matches!(
         error_value,
         ConfigError::ConfigurationTooLarge { .. }
@@ -665,7 +680,7 @@ fn map_config_error(error_value: ConfigError) -> SelectionErrorDto {
     }
 }
 
-fn map_filesystem_error(error_value: FsError) -> SelectionErrorDto {
+pub(crate) fn map_filesystem_error(error_value: FsError) -> SelectionErrorDto {
     match error_value {
         FsError::ResourceLimitExceeded {
             resource, limit, ..
@@ -681,7 +696,7 @@ fn map_filesystem_error(error_value: FsError) -> SelectionErrorDto {
     }
 }
 
-fn map_session_error(error_value: SessionError) -> SelectionErrorDto {
+pub(crate) fn map_session_error(error_value: SessionError) -> SelectionErrorDto {
     match error_value {
         SessionError::Capability(CapabilityError::DocumentSymbolsUnavailable) => error(
             SelectionErrorCode::LspCapabilityUnavailable,
@@ -709,7 +724,7 @@ fn map_session_error(error_value: SessionError) -> SelectionErrorDto {
     }
 }
 
-fn map_transport_error(error_value: TransportError) -> SelectionErrorDto {
+pub(crate) fn map_transport_error(error_value: TransportError) -> SelectionErrorDto {
     match error_value {
         TransportError::Process(ProcessError::Spawn(_) | ProcessError::SpawnWorker(_)) => error(
             SelectionErrorCode::LspStartFailed,
@@ -746,7 +761,7 @@ fn map_transport_error(error_value: TransportError) -> SelectionErrorDto {
     }
 }
 
-fn map_symbol_error(error_value: SymbolError) -> SelectionErrorDto {
+pub(crate) fn map_symbol_error(error_value: SymbolError) -> SelectionErrorDto {
     match error_value {
         SymbolError::FlatSymbolsUnsupported => error(
             SelectionErrorCode::LspFlatSymbolsUnsupported,

@@ -33,5 +33,10 @@ name = "select_cli"
 path = "tests/select_cli.rs"
 harness = false
 
+[[test]]
+name = "outline_cli"
+path = "tests/outline_cli.rs"
+harness = false
+
 [lints]
 workspace = true

@@ -6,9 +6,9 @@ use srcmv_core::{ByteRange, LineIndex};
 use srcmv_lsp::capabilities::SupportedPositionEncoding;
 use srcmv_lsp::position::{PositionConverter, PositionLimits};
 use srcmv_lsp::symbols::{
-    KnownSymbolKind, MatchMode, NormalizedSymbolKind, SelectionExtent, SymbolError, SymbolLimits,
-    apply_extent, normalize_document_symbols, normalize_hierarchical_symbols, resolve_name,
-    resolve_position,
+    DEFAULT_MAXIMUM_OUTLINE_SYMBOLS, KnownSymbolKind, MatchMode, NormalizedSymbolKind,
+    SelectionExtent, SymbolError, SymbolLimits, apply_extent, normalize_document_symbols,
+    normalize_hierarchical_symbols, order_unique_candidates, resolve_name, resolve_position,
 };
 
 const MAXIMUM_TEST_LINES: u64 = 10_000;
@@ -28,9 +28,20 @@ fn symbol(
     selection_range: Range,
     children: Option<Vec<DocumentSymbol>>,
 ) -> DocumentSymbol {
+    symbol_with_detail(name, kind, symbol_range, selection_range, None, children)
+}
+
+fn symbol_with_detail(
+    name: &str,
+    kind: SymbolKind,
+    symbol_range: Range,
+    selection_range: Range,
+    detail: Option<String>,
+    children: Option<Vec<DocumentSymbol>>,
+) -> DocumentSymbol {
     DocumentSymbol::new(
         name.to_owned(),
-        None,
+        detail,
         kind,
         None,
         None,
@@ -803,4 +814,206 @@ fn all_mode_returns_empty_while_unique_mode_reports_not_found() {
 
     assert!(all.is_empty());
     assert_eq!(unique, SymbolError::NotFound);
+}
+
+#[test]
+fn outline_candidates_follow_the_frozen_comparator_and_coalesce_duplicates() {
+    assert_eq!(DEFAULT_MAXIMUM_OUTLINE_SYMBOLS, 10_000);
+
+    let text = "aaaa\nbbbb\ncccc\ndddd\neeee\n";
+    let roots = vec![
+        symbol(
+            "late",
+            SymbolKind::Function,
+            range(4, 0, 4, 4),
+            range(4, 0, 4, 1),
+            None,
+        ),
+        symbol(
+            "mid",
+            SymbolKind::Class,
+            range(2, 0, 3, 4),
+            range(2, 0, 2, 1),
+            Some(vec![symbol(
+                "inner",
+                SymbolKind::Method,
+                range(3, 0, 3, 4),
+                range(3, 0, 3, 1),
+                None,
+            )]),
+        ),
+        symbol(
+            "early",
+            SymbolKind::Function,
+            range(0, 0, 0, 4),
+            range(0, 0, 0, 1),
+            None,
+        ),
+        // Exact duplicate of the first root: same lsp_range, kind, path, name.
+        symbol(
+            "late",
+            SymbolKind::Function,
+            range(4, 0, 4, 4),
+            range(4, 0, 4, 1),
+            None,
+        ),
+        // Same enclosing range and name as `early`, but an earlier kind spelling.
+        symbol(
+            "same",
+            SymbolKind::Class,
+            range(0, 0, 0, 4),
+            range(0, 0, 0, 1),
+            None,
+        ),
+        symbol(
+            "same",
+            SymbolKind::Function,
+            range(0, 0, 0, 4),
+            range(0, 0, 0, 1),
+            None,
+        ),
+    ];
+    let symbols = with_converter(text, |converter| {
+        normalize_hierarchical_symbols(roots, converter, SymbolLimits::default())
+    })
+    .expect("symbols should normalize");
+
+    let ordered = order_unique_candidates(&symbols);
+
+    let observed = ordered
+        .iter()
+        .map(|candidate| (candidate.name.as_str(), candidate.kind.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        observed,
+        [
+            ("same", "class"),
+            ("early", "function"),
+            ("same", "function"),
+            ("mid", "class"),
+            ("inner", "method"),
+            ("late", "function"),
+        ]
+    );
+}
+
+#[test]
+fn duplicate_keys_coalesce_regardless_of_detail_and_keep_the_sorted_survivor() {
+    let text = "run\nrun\n";
+    let roots = vec![
+        symbol_with_detail(
+            "run",
+            SymbolKind::Method,
+            range(1, 0, 1, 3),
+            range(1, 0, 1, 3),
+            Some("zzz detail".to_owned()),
+            None,
+        ),
+        symbol_with_detail(
+            "run",
+            SymbolKind::Method,
+            range(1, 0, 1, 3),
+            range(1, 0, 1, 3),
+            Some("aaa detail".to_owned()),
+            None,
+        ),
+    ];
+    let symbols = with_converter(text, |converter| {
+        normalize_hierarchical_symbols(roots, converter, SymbolLimits::default())
+    })
+    .expect("symbols should normalize");
+
+    let ordered = order_unique_candidates(&symbols);
+
+    assert_eq!(ordered.len(), 1);
+    assert_eq!(ordered[0].detail.as_deref(), Some("aaa detail"));
+}
+
+#[test]
+fn outline_ordering_matches_all_mode_resolution_for_every_name() {
+    let text = "aaaa\nbbbb\ncccc\ndddd\neeee\n";
+    let roots = vec![
+        symbol(
+            "late",
+            SymbolKind::Function,
+            range(4, 0, 4, 4),
+            range(4, 0, 4, 1),
+            None,
+        ),
+        symbol(
+            "mid",
+            SymbolKind::Class,
+            range(2, 0, 3, 4),
+            range(2, 0, 2, 1),
+            Some(vec![
+                symbol(
+                    "shared",
+                    SymbolKind::Method,
+                    range(3, 0, 3, 4),
+                    range(3, 0, 3, 1),
+                    None,
+                ),
+                symbol(
+                    "shared",
+                    SymbolKind::Function,
+                    range(3, 0, 3, 4),
+                    range(3, 0, 3, 2),
+                    None,
+                ),
+            ]),
+        ),
+        symbol(
+            "early",
+            SymbolKind::Function,
+            range(0, 0, 0, 4),
+            range(0, 0, 0, 1),
+            None,
+        ),
+        symbol(
+            "late",
+            SymbolKind::Function,
+            range(4, 0, 4, 4),
+            range(4, 0, 4, 1),
+            None,
+        ),
+    ];
+    let symbols = with_converter(text, |converter| {
+        normalize_hierarchical_symbols(roots, converter, SymbolLimits::default())
+    })
+    .expect("symbols should normalize");
+    let ordered = order_unique_candidates(&symbols);
+
+    let mut names = ordered
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names.dedup();
+    for name in names {
+        let resolved = resolve_name(
+            &symbols,
+            text,
+            name,
+            None,
+            SelectionExtent::Symbol,
+            MatchMode::All,
+            SymbolLimits::default(),
+        )
+        .expect("all-mode resolution should succeed");
+        let outlined = ordered
+            .iter()
+            .filter(|item| item.name == name)
+            .map(|item| (item.name.as_str(), item.kind.as_str(), item.byte_range))
+            .collect::<Vec<_>>();
+        let resolved = resolved
+            .iter()
+            .map(|item: &srcmv_lsp::symbols::SymbolMatch| {
+                (item.name.as_str(), item.kind.as_str(), item.symbol_range)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outlined, resolved,
+            "outline order must match all-mode resolution for `{name}`"
+        );
+    }
 }

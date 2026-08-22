@@ -1,0 +1,64 @@
+{
+  "outline_protocol_version": 1,
+  "workspace_identity_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "source": {
+    "path": "source.rs",
+    "sha256": "sha256:fc7562188b897588d32ddf159a0e763be18e824ba9e3bd4606cc3a70fdfa124f",
+    "byte_length": 78
+  },
+  "server": {
+    "configuration_id": null,
+    "reported_name": "srcmv-fake-lsp",
+    "reported_version": "1",
+    "position_encoding": "utf-16"
+  },
+  "symbols": [
+    {
+      "name": "Outer",
+      "symbol_kind": "class",
+      "symbol_path": ["Outer"],
+      "depth": 0,
+      "detail": "fixture class",
+      "start_line": 3,
+      "start_column": 1,
+      "end_line": 7,
+      "end_column": 2,
+      "lsp_range": {
+        "start": {"line": 2, "character": 0},
+        "end": {"line": 6, "character": 1}
+      },
+      "lsp_selection_range": {
+        "start": {"line": 2, "character": 5},
+        "end": {"line": 2, "character": 10}
+      },
+      "selector": {"kind": "bytes", "start": 19, "end": 77}
+    },
+    {
+      "name": "alpha",
+      "symbol_kind": "function",
+      "symbol_path": ["Outer", "alpha"],
+      "depth": 1,
+      "detail": "fixture function",
+      "start_line": 4,
+      "start_column": 5,
+      "end_line": 6,
+      "end_column": 6,
+      "lsp_range": {
+        "start": {"line": 3, "character": 4},
+        "end": {"line": 5, "character": 5}
+      },
+      "lsp_selection_range": {
+        "start": {"line": 3, "character": 11},
+        "end": {"line": 3, "character": 16}
+      },
+      "selector": {"kind": "bytes", "start": 36, "end": 75}
+    }
+  ],
+  "warnings": [
+    {
+      "code": "OBSERVATION_MAY_BE_STALE",
+      "context": {},
+      "message": "no existing srcmv lock coordinated this read-only observation"
+    }
+  ]
+}

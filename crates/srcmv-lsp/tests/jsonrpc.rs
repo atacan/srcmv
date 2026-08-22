@@ -745,3 +745,39 @@ fn nested_params(depth: usize, opener: char, closer: char) -> String {
     body.push('}');
     body
 }
+
+#[test]
+fn frame_decoder_reports_mid_frame_exactly_while_input_is_partial() {
+    let mut decoder = FrameDecoder::new(FramingLimits::default());
+    assert!(!decoder.is_mid_frame(), "a fresh decoder is between frames");
+
+    let mut partial_header = Vec::new();
+    partial_header.extend_from_slice(b"Content-Length: 5\r\n\r");
+    let pushed = decoder
+        .push(&partial_header)
+        .expect("partial header should be retained");
+    assert!(pushed.is_empty());
+    assert!(decoder.is_mid_frame(), "a partial header is mid-frame");
+
+    let pushed = decoder
+        .push(b"\nhello")
+        .expect("terminator completion should emit the body");
+    assert_eq!(pushed, [b"hello".to_vec()]);
+    assert!(!decoder.is_mid_frame(), "a completed body ends the frame");
+
+    let complete = encode_message(
+        &json!({"jsonrpc":"2.0","method":"server/ready"}),
+        FramingLimits::default(),
+    )
+    .expect("fixture should encode");
+    let (head, tail) = complete.split_at(3);
+    let pushed = decoder.push(head).expect("frame head should be retained");
+    assert!(pushed.is_empty());
+    assert!(decoder.is_mid_frame(), "a partial body header is mid-frame");
+
+    let pushed = decoder
+        .push(tail)
+        .expect("frame tail should complete the next body");
+    assert_eq!(pushed.len(), 1);
+    assert!(!decoder.is_mid_frame(), "the next frame boundary is clean");
+}

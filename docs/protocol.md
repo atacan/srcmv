@@ -14,7 +14,7 @@ schemas are `docs/schema/v1/request.schema.json` and
 ## Command surface
 
 The `srcmv` binary provides the complete grammar for `inspect`, `select`,
-`apply`, `recover`, `capabilities`, `selection-capabilities`, and
+`outline`, `apply`, `recover`, `capabilities`, `selection-capabilities`, and
 `protocol-version`. `apply` is the only mutation interface. A commit must use
 exactly one of an expected plan digest or the explicit human convenience that
 accepts the current plan. Agents use the expected digest.
@@ -265,6 +265,88 @@ Only `LSP_TIMEOUT`, `LSP_START_FAILED`, `LSP_EXITED`, and
 `LSP_REQUEST_FAILED` are marked retryable. `SELECTION_AMBIGUOUS` includes a
 bounded deterministic candidate list; use a more specific `--kind` or position,
 or intentionally request `--all`.
+
+## Read-only outline protocol v1
+
+The outline surface is independently versioned like selection v1. It runs one
+read-only `textDocument/documentSymbol` request through the same session
+lifecycle, trusted-descriptor resolution, snapshot limits, and document-symbol
+normalization as selection, then emits every symbol as a flat record. It does
+not modify edit protocol v1, plan-hash v1, capability output, or any frozen
+registry. The normative Draft 2020-12 success schema is
+`docs/schema/outline-v1/response.schema.json`.
+
+### Grammar
+
+```text
+srcmv [--workspace PATH] outline --path RELATIVE [--kind KIND ...]
+  [--server-id ID | --server-program PROGRAM --language-id ID [--server-arg ARG] ...]
+  [--json]
+```
+
+There is no name or position query because everything is listed, no `--all`
+because the listing is already complete, and no extent choice because each
+record's byte selector always uses the server's enclosing symbol range —
+selection-v1 `extent = "symbol"` semantics. An optional, repeatable
+`--kind KIND` filter accepts only standardized spellings and applies after
+ordering and deduplication; an unknown spelling is `INVALID_OUTLINE_QUERY`
+(exit 2).
+
+### Field semantics
+
+Successful responses carry `outline_protocol_version: 1`, an opaque workspace
+identity hash, the immutable snapshot description (`path`, `sha256`,
+`byte_length`), negotiated server identity and position encoding, flat symbol
+records, and structured warnings (only `OBSERVATION_MAY_BE_STALE`).
+
+| Field | Semantics |
+|---|---|
+| `start_line` | one-based physical line of the symbol's converted start byte |
+| `end_line` | one-based physical line containing the exclusive end byte (display-inclusive end) |
+| `start_column` | one-based Unicode-scalar column of the start byte; always populated in v1 |
+| `end_column` | one-based Unicode-scalar column just past the end content; nullable in the schema but unreachable through the frozen v1 LSP pipeline |
+| `depth` | `symbol_path.len() - 1`; root symbols are `0` |
+| `symbol_kind` | selection-v1 spelling; `"unknown"` for non-standard numeric kinds |
+| `lsp_range`, `lsp_selection_range` | raw zero-based server coordinates in the negotiated encoding, audit only |
+| `selector` | authoritative validated half-open byte range of the enclosing symbol range |
+
+v1 deliberately omits `request_source` and selected-payload digests: hashing
+every symbol on a large listing is wasted work and implies edit composition.
+Use the byte selector with `select --at-byte` when composition is intended.
+
+### Ordering, deduplication, and degenerate inputs
+
+Records are ordered by the frozen candidate comparator — enclosing-range
+start/end bytes, kind spelling then numeric value, symbol path, name,
+reveal-range start/end bytes, then detail — regardless of server child order,
+and exact duplicates coalesce by `(lsp_range, kind, symbol_path, name)`.
+
+| Situation | Result |
+|---|---|
+| No symbols (`null` / `[]`) or none surviving `--kind` filtering | success with `"symbols": []`; human output prints `no document symbols` |
+| Legacy flat `SymbolInformation[]` | `LSP_FLAT_SYMBOLS_UNSUPPORTED` (exit 4) |
+| Malformed ranges, invalid containment, bad payloads | `LSP_PROTOCOL_ERROR` (exit 4) |
+| Missing `documentSymbolProvider` | `LSP_CAPABILITY_UNAVAILABLE` (exit 4) |
+| Server not resolvable or ambiguous descriptors | `LSP_SERVER_NOT_CONFIGURED` (exit 4) |
+| Timeouts, spawn failure, early exit, request errors | `LSP_TIMEOUT` / `LSP_START_FAILED` / `LSP_EXITED` / `LSP_REQUEST_FAILED` (exit 4, retryable per the shared table) |
+| Normalization, session, transport, serialization, or outline-count bounds exceeded | `LSP_RESOURCE_LIMIT_EXCEEDED` (exit 4) |
+
+Errors after outline dispatch carry `outline_protocol_version: 1` and the
+outline registry: `INVALID_OUTLINE_QUERY`, `OUTLINE_INTERNAL_ERROR`, plus the
+shared `LSP_*` support spellings reused verbatim from selection v1. Categories
+map to exits 2 (request), 4 (support), and 8 (internal); there is no conflict
+category because outline performs no query matching.
+
+### Limits
+
+All snapshot, normalization, position-conversion, session, and transport limits
+apply unchanged; the frozen 1,000-match selection limit does not apply. One new
+bound exists: at most 10,000 symbols are emitted (resource `outline_symbols`),
+checked after ordering, deduplication, and kind filtering, before any
+serialization. Serialized JSON or human output stays bounded by the global
+16 MiB exact-response limit. Inherited quirk unchanged from selection: the
+transport's 64-level JSON-depth cap practically bounds representable hierarchy
+depth to roughly 31 levels even though normalization allows 256.
 
 ## Errors and warnings
 

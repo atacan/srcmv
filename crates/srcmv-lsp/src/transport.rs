@@ -285,6 +285,10 @@ impl Transport {
     ///
     /// Returns the highest-precedence failure ready at the orchestration
     /// boundary, or [`TransportError::DeadlineExceeded`] if none was ready.
+    ///
+    /// A partially decoded inbound frame keeps waiting for its remaining
+    /// chunks within the active deadline; only a genuinely expired deadline
+    /// reports [`TransportError::DeadlineExceeded`].
     pub fn next_incoming(&mut self, deadline: Instant) -> Result<IncomingMessage, TransportError> {
         let ready = self.drain_ready(None, deadline);
         if !ready.is_empty() {
@@ -294,7 +298,7 @@ impl Transport {
             return Ok(message);
         }
 
-        let first = match self.process.next_event(deadline) {
+        let mut observed = match self.process.next_event(deadline) {
             Ok(event) => Some(event),
             Err(ProcessError::DeadlineExceeded(_)) => None,
             Err(error) => {
@@ -305,7 +309,40 @@ impl Transport {
                 return self.choose_or_deadline(ready);
             }
         };
-        let ready = self.drain_ready(first, deadline);
+
+        loop {
+            let ready = self.drain_ready(observed.take(), deadline);
+            if !ready.is_empty() {
+                return self.choose(ready);
+            }
+            if let Some(message) = self.pop_incoming() {
+                return Ok(message);
+            }
+
+            // The observed chunk can be one fragment of a larger inbound
+            // frame whose remainder is still in flight. While the frame
+            // decoder holds partial input and time remains, keep blocking on
+            // the next event instead of reporting a premature deadline.
+            let mid_frame = self
+                .decoder
+                .as_ref()
+                .is_some_and(crate::jsonrpc::FrameDecoder::is_mid_frame);
+            if !mid_frame || Instant::now() >= deadline {
+                break;
+            }
+            observed = match self.process.next_event(deadline) {
+                Ok(event) => Some(event),
+                Err(ProcessError::DeadlineExceeded(_)) => break,
+                Err(error) => {
+                    let mut ready = self.drain_ready(None, deadline);
+                    if ready.io_condition.is_none() {
+                        ready.io_condition = Some(IoCondition::Process(error));
+                    }
+                    return self.choose_or_deadline(ready);
+                }
+            };
+        }
+        let ready = self.drain_ready(None, deadline);
         self.choose_or_deadline(ready)
     }
 
