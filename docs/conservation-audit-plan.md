@@ -126,8 +126,9 @@ Greedy assignment never produces a false `pass`: every credited byte is
 byte-verified against an exclusively consumed interval. The tool therefore may
 under-credit in rare packings but never over-credits; acceptance criterion 2 is
 stated as this soundness property, and known-hard packing cases are pinned as
-labeled fixtures rather than promised solvable (§15). Bounded backtracking is a
-listed future enhancement (§17).
+labeled fixtures whose exact expected outcomes are documented rather than
+promised solvable (§15). Bounded backtracking is a listed future enhancement
+(§17).
 
 ## 5. Repository fit
 
@@ -380,7 +381,12 @@ after bytes lost, aligned to true edit boundaries rather than line guesses.
 Pipeline per changed pair `(before, after)`:
 
 1. Trim the common byte prefix and suffix (existing preview approach).
-2. Split both middles into logical lines using `LineIndex` semantics.
+2. Split both middles into logical lines using `LineIndex` boundaries, and use
+   **terminator-exclusive line contents** as the anchoring unit: a line unit is
+   its span excluding the LF/CRLF/lone-CR terminator. Gap bytes therefore
+   carry the separators, which is what lets pure EOL conversions surface as
+   tiny gap regions (§8.7). Content hashes for anchoring ignore leading and
+   trailing ASCII whitespace.
 3. Build anchor points from **unique lines**: a line whose trimmed-content hash
    occurs exactly once in the before middle and exactly once in the after
    middle is an anchor pair. Take the longest increasing subsequence of
@@ -573,16 +579,24 @@ Consumption is the soundness core:
   is ever counted twice (§9.2 holds by construction). Non-qualifying regions
   proceed through exact and fragment matching normally; their post-matching
   residue is classified per §8.5.
-- **Line-edge normalization** is the transformation `T`: replace every CRLF
-  and lone CR with LF, split on LF, strip leading and trailing ASCII
-  whitespace from each line, then join the lines with LF. A region qualifies
-  iff `T(region) == T(paired_remainder)`. This catches re-indentation,
-  trailing-space churn, EOL conversion, and final-newline additions —
-  including the degenerate gaps of a pure EOL conversion, where each removed
-  region is a single CR byte whose `T` image is empty and equals its empty
-  remainder. It deliberately does *not* equate intra-line spacing changes or
-  deleted line breaks: joining two statements changes the joined sequence and
-  stays unmatched.
+- **Line-edge normalization** is a sequence-valued transformation `W` pinned
+  to the extraction line convention (§8.1 step 2): first replace every CRLF
+  and lone CR with LF; then split into terminator-exclusive line contents,
+  where a trailing terminator does not begin an additional line, an empty
+  input has zero lines, and a lone terminator is one empty line; then strip
+  leading and trailing ASCII whitespace from every line; finally **drop empty
+  lines** and compare the remaining content sequences for exact equality.
+  Worked examples: `W("\r") = []`, `W("") = []`, `W("a\n") = ["a"]`,
+  `W("  a\n\tb\r\n") = ["a", "b"]`, `W("a\n\nb") = W("a\nb") = ["a", "b"]`
+  (blank-line insertion, deletion, and collapse are formatting churn by
+  design). A gap-derived region qualifies iff
+  `W(region) == W(paired_remainder)`. This catches re-indentation,
+  trailing-space churn, EOL conversion — including the degenerate gaps of a
+  pure EOL conversion, where each removed region is a single CR byte whose
+  `W` image equals its empty remainder's — and final-newline additions. It
+  deliberately does *not* equate intra-line spacing changes or deleted line
+  breaks: joining two statements yields one nonempty line where there were
+  two, so the sequences differ and the region stays unmatched.
 - Applicability is narrow by construction: deleted-file regions and fallback
   regions carry no paired remainder (§8.1) and are never formatting-
   classified. Known caveat, documented for reviewers: content inside multi-
@@ -777,7 +791,7 @@ Illustrative shape:
     "conserved_bytes": 12002,
     "conserved_exact_bytes": 11670,
     "conserved_fragment_bytes": 332,
-    "formatting_bytes": 210,
+    "formatting_only_bytes": 210,
     "insubstantial_residue_bytes": 22,
     "unmatched_substantial_bytes": 110,
     "ambiguous_common_bytes": 0,
@@ -797,8 +811,8 @@ Illustrative shape:
       "status": "conserved",
       "pairing_ambiguous": false,
       "destinations": [
-        {"path": "src/parse/core.ts", "byte_range": [512, 2064], "line_range": [19, 76]},
-        {"path": "src/parse/util.ts", "byte_range": [88, 96], "line_range": [4, 4]}
+        {"path": "src/parse/core.ts", "byte_range": [512, 1352], "line_range": [19, 62]},
+        {"path": "src/parse/util.ts", "byte_range": [88, 800], "line_range": [4, 39]}
       ]
     }
   ],
@@ -830,7 +844,10 @@ Field rules:
   (`is_binary` rule reused: contains NUL or invalid UTF-8; see §9.5).
 - `sha256` values use the standard prefixed lowercase spelling.
 - The `totals` object contains exactly the §9.2 ledger terms plus counts;
-  the identity `removed_bytes = Σ ledger terms` holds on every report.
+  each ledger term maps to its JSON field by appending `_bytes`
+  (`conserved_exact` → `conserved_exact_bytes`, `formatting_only` →
+  `formatting_only_bytes`, …), and the identity
+  `removed_bytes = Σ ledger terms` holds on every report.
 - Destinations within one region are ordered by `(path, offset)`; fragments
   appear as separate destination entries, making splits visible.
 - Digests enable reviewers to verify any claim independently:
@@ -997,18 +1014,22 @@ Property tests (proptest, committed regressions), split by direction:
   each other, which is the domain where greedy matching is complete.
 - **Labeled hard-packing fixtures:** deterministic cases where distinct region
   contents compete for intersecting occurrences, with lengths above every
-  floor so outcomes are verdict-visible. Canonical fixture: base file `f1`
-  removes `r1` (48 bytes: `"0123456789abcdef"` repeated three times) and
-  `r2` (32 bytes: the last 32 bytes of the 64-byte composite
-  `C = r1 ++ "y"×16`, i.e., `C[16..48]`, which intersects `r1`'s span); head
-  contains `C` once inside `a.txt` at a low offset plus one escape copy of
-  `r1` inside `z.txt` (sorting after `a.txt`). Greedy longest-first takes
-  `r1`'s ascending-first candidate — the intersecting copy inside `C` — after
-  which `r2`'s only occurrence overlaps consumed bytes, leaving 32 bytes of
-  substantial residue ⇒ `fail`, although the perfect assignment (`r1 → z.txt`,
-  `r2 → C[16..48]`) exists. Assert the documented conservative outcome
-  (`fail`, or `inconclusive` under strict options), never a fabricated pass;
-  never promise solvability.
+  floor so outcomes are verdict-visible, and with the expected outcome derived
+  by hand-tracing §8.3–§8.5 before pinning. Canonical intersecting-regions
+  fixture: base file `f1` removes `r1 = U` (96 bytes of distinct, non-repeating
+  content) and `r2 = U[79..96] ++ y×15` (32 bytes: the last 17 bytes of `U`
+  followed by 15 `y` bytes); head contains only `C = U ++ y×15` (111 bytes) in
+  `a.txt`. Trace: greedy longest-first matches `r1` at `C[0..96)` and consumes
+  it; `r2`'s only occurrence `C[79..111)` intersects the consumed span so
+  exact matching fails; in fragment matching every window of `r2`'s `U`-derived
+  part verifies only inside consumed bytes and is rejected by consumption
+  checks, while the trailing 15-byte `y`-run is shorter than `K = 16` so no
+  probe window exists there — zero fragments accepted, residue 32 ≥ floor,
+  verdict `fail`. The outcome is *correct*, not merely conservative: under
+  exclusive accounting the interior segment of `U` is demanded twice but
+  exists once, so those bytes are genuinely unconserved. The fixture pins
+  that intersecting demands surface as `fail` deterministically rather than
+  as silent passes; it makes no solvability claim.
 - **Mutation property:** flip/copy/delete bytes in the scattered copies ⇒
   outcome ∈ {fail} ∪ inconclusive-with-reason, never `pass` with
   `unmatched_substantial_bytes == 0` unless the mutation was provably absorbed
@@ -1033,6 +1054,9 @@ Integration tests (`crates/srcmv-cli/tests/audit_cli.rs`, real-binary style of
 - manifest mode happy path; missing entry and bad syntax are hard errors —
   exit 2 via `INVALID_REQUEST` (missing entries are knowable before any
   analysis, so the audit fails fast rather than reporting inconclusive);
+- skipped input: a file that vanishes between walk and read (or fails stable
+  verification, forced through a test seam in `read_audit_tree`) completes
+  with exit 0, verdict `inconclusive`, and reason `unreadable_input_skipped`;
 - flag-less invocation prints the human summary to stdout and nothing to
   stderr; error rendering follows `run_with_io`'s `--json` pre-scan;
 - `--json` single-line validity, schema conformance (via `jsonschema`
@@ -1047,7 +1071,8 @@ The set covers the documented scenario matrix:
 `pass.json`, `pass-pairing-ambiguous.json`, `pass-formatting.json`,
 `fail.json`, `fail-count-formatting.json`, `manifest-mode.json`,
 `inconclusive-work-budget.json`, `inconclusive-report-truncated.json`,
-`inconclusive-ambiguous-common.json`, `inconclusive-strict-uniqueness.json`.
+`inconclusive-ambiguous-common.json`, `inconclusive-strict-uniqueness.json`,
+`inconclusive-skipped-input.json`.
 
 Boundary suite (house style): below/at/above every `AuditTreeLimits` and
 budget field using lowered constructors, asserting fail-closed behavior.
@@ -1077,7 +1102,7 @@ trees; match whatever layout example 10 settles on).
 | 2. Tree reading | `audit_tree.rs`, limits + boundary tests, manifest parser | Phase 0 (validation rules exist) |
 | 3. Protocol layer | DTOs, serialization budget, schema-conformance tests, goldens finalized | Phases 1–2 |
 | 4. CLI integration | grammar, orchestration, rendering, integration suite, example, README + docs page | Phase 3 |
-| 5. Hardening | fuzz campaigns, performance baseline entry, `qualify-platform.sh` run on qualified hosts, release notes | Phase 4 |
+| 5. Hardening | fuzz campaigns, performance baseline entry, `qualify-platform.sh` run on qualified hosts, AC#8 source-scan script extension (no `std::fs` in `core::conservation`), release notes | Phase 4 |
 
 Each phase merges green under the standard gate: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
