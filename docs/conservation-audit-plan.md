@@ -402,8 +402,10 @@ Pipeline per changed pair `(before, after)`:
     gap, trim common byte prefix/suffix of the two gap slices; whatever
     remains on the before side is one candidate removed region (the after-side
     remainder is recorded as this region's paired insertion context; it feeds
-    the §8.7 formatting comparison and the §8.8 insertion-span set). Only
-    deleted-file regions lack paired
+    the §8.7 formatting comparison and the §8.8 insertion-span set). A gap
+    whose before-side remainder is empty — including an entire fallback middle
+    for a pure insertion (step 5) — yields no region; its after-side remainder
+    feeds only the insertion-span set. Only deleted-file regions lack paired
     context — there is no counterpart tree — so they are never
     formatting-classified.
 5. **Fallback applies only when anchoring produced no usable brackets** — zero
@@ -420,18 +422,18 @@ Pipeline per changed pair `(before, after)`:
     size-based fallback. Coarseness costs match precision, never soundness,
     because matching happens globally next. Budget semantics: the anchor pass
     charges a soft effort cap against the extraction pool; breaching the cap
-    degrades only that file pair to the coarse fallback without exhausting the
-    pool, while genuine extraction-pool exhaustion remains governed by §10's
-    stop-and-`unanalyzed` rule and preempts fallback. An empty before-side
-    (pure insertion) yields no region; its remainder feeds only the
-    insertion-span set.
+    degrades only that file pair to the coarse fallback, and the units it
+    already spent remain deducted from the shared pool, so repeated cap
+    breaches across many pairs can still exhaust the pool — at which point
+    §10's stop-and-`unanalyzed` rule takes precedence over further fallbacks.
+    Empty before-sides yield no region (step 4).
 6. Deleted files contribute one region covering the whole file (empty files
    contribute nothing); such regions carry no paired insertion context.
 
 Regions carry: source path, half-open byte range, length, SHA-256 of the exact
-bytes, lazily derivable line span. Adjacent regions separated by fewer than
-`merge_gap_bytes` (default 0) are not merged in v1; merging is unnecessary
-because fragment matching tolerates interior gaps (§8.5).
+bytes, lazily derivable line span. Adjacent regions are never merged in v1;
+merging is unnecessary because fragment matching tolerates interior gaps
+(§8.5).
 
 Complexity: linear in input plus LIS cost of anchor count; fallback adds only
 a single whole-middle trim. Total extraction work charges the budget in §10.
@@ -483,9 +485,12 @@ Process regions in deterministic priority order: longer length first, ties by
 (source path bytes, then start offset ascending). For each region `r`:
 
 1. Probe the index with the first cold K-window of `r`: scan forward through
-   `r` to the first non-hot window. If no window of `r` is cold **after this
-   forward scan is exhausted** (the neighbor fallback having been attempted),
-   classify `r` `ambiguous_common` per §8.6 — never silently skip it.
+   `r` to the first non-hot window. **Neighbor fallback:** when a probed
+   window is hot, continue to the nearest cold window on either side within
+   `r`; hot stretches are matched through the extensions those neighboring
+   cold anchors induce, byte-verified exactly like any candidate. If no window
+   of `r` is cold after this scan is exhausted, classify `r`
+   `ambiguous_common` per §8.6 — never silently skip it.
 2. Verify candidates in ascending `(path, offset)` order by comparing all
    `r.len()` bytes. Skip candidates whose span intersects any already-consumed
    interval in that file (§8.6) — overlap means the occurrence is spent.
@@ -516,7 +521,9 @@ For each deferred region, walk it left to right collecting disjoint matched
 fragments:
 
 1. From current offset `o`, probe the index with the first cold window at or
-   after `o`; extend each candidate rightward byte-wise (charging work units)
+   after `o` (if no cold window remains at or after `o`, no extension is
+   acceptable at this offset and step 3 applies); extend each candidate
+   rightward byte-wise (charging work units)
    while bytes equal and the span `[candidate_start, candidate_start + t)`
    stays unconsumed; also extend leftward into `[region_start, o)` only while
    those before-side bytes are not yet covered by an earlier accepted fragment
@@ -752,9 +759,10 @@ may lower but not raise, matching house rules):
 | Index memory | 2 GiB (effectively bounded by tree bytes) |
 | Hot-bucket positions | 64 |
 | Extraction work units | 200,000,000 (≈ bytes scanned/hashed) |
-| Anchor-pass effort cap | 50,000,000 work units per file pair (charged to the extraction pool; breaching degrades that pair to fallback) |
+| Anchor-pass effort cap | 50,000,000 work units per file pair (charged to the extraction pool; breaching degrades that pair to fallback; its spent units remain deducted, so repeated breaches across many pairs can still exhaust the pool, at which point §10's stop-and-`unanalyzed` rule takes precedence over further fallbacks) |
 | Matching work units | 400,000,000 (≈ bytes compared/probed) |
 | Report regions listed | 2,000 (largest first, then source order) |
+| Report unmatched/formatting listings | 200 entries each (largest first, then source order) |
 | Report new-content spans | 50 |
 | Serialized report | 16 MiB |
 
@@ -767,11 +775,14 @@ DoS posture:
   candidate lists; every probe/comparison charges work units; budgets convert
   attacks into `inconclusive` with a reason, not hangs.
 - **Work-budget mechanics:** the extraction and matching budgets are global
-  pools charged by every phase; there are no per-region quotas. When a pool is
-  exhausted, processing stops at that point in the deterministic region order,
-  remaining bytes are ledgered as `unanalyzed`, and the verdict becomes
-  `inconclusive` with `work_budget_exceeded` (§9.3). No ordering or option
-  combination can turn exhaustion into a verdict-bearing pass.
+  pools charged by every phase; within matching there are no per-region quotas.
+  The sole extraction-side exception is the anchor pass's per-file-pair soft
+  effort cap (§8.1 step 5), which degrades only that pair to fallback rather
+  than stopping the run. When a pool is exhausted, processing stops at that
+  point in the deterministic region order, remaining bytes are ledgered as
+  `unanalyzed`, and the verdict becomes `inconclusive` with
+  `work_budget_exceeded` (§9.3). No ordering or option combination can turn
+  exhaustion into a verdict-bearing pass.
 - Checked arithmetic precedes every allocation and I/O step; limits are charged
   at first knowledge, exactly like snapshot/planner accounting.
 - The serialized report is assembled under a running byte budget; overflow
@@ -796,7 +807,7 @@ Illustrative shape:
 ```json
 {
   "conservation_audit_version": 1,
-  "verdict": "pass",
+  "verdict": "fail",
   "inconclusive_reasons": [],
   "options": {
     "min_substantial_bytes": 32,
@@ -843,14 +854,25 @@ Illustrative shape:
     {
       "id": 7,
       "source_path": "src/legacy/parser.ts",
-      "source_byte_range": [220, 260],
-      "source_line_range": [9, 9],
-      "length": 40,
+      "source_byte_range": [220, 330],
+      "source_line_range": [9, 11],
+      "length": 110,
       "sha256": "sha256:ab41…",
       "status": "unmatched_substantial"
     }
   ],
-  "formatting": [],
+  "formatting": [
+    {
+      "id": 9,
+      "source_path": "src/legacy/parser.ts",
+      "source_byte_range": [512, 722],
+      "source_line_range": [21, 27],
+      "length": 210,
+      "sha256": "sha256:c3d4…",
+      "status": "formatting_only",
+      "paired_destination": {"path": "src/legacy/parser.ts", "byte_range": [505, 715]}
+    }
+  ],
   "new_content": [
     {"path": "src/parse/index.ts", "byte_range": [0, 431], "line_range": [1, 12],
      "length": 431, "sha256": "sha256:0be3…"}
@@ -893,7 +915,9 @@ head:  /tmp/head  (143 files, 3211002 bytes)
 verdict: FAIL
 removed 12344 B | conserved 12002 B | unmatched 110 B | formatting 210 B | new 1905 B
 unmatched regions (1):
-  - src/legacy/parser.ts [220..260) (lines 9..9) 40 B sha256:ab41…
+  - src/legacy/parser.ts [220..330) (lines 9..11) 110 B sha256:ab41…
+formatting-only regions (1):
+  - src/legacy/parser.ts [512..722) (lines 21..27) 210 B sha256:c3d4…
 top new content:
   - src/parse/index.ts [0..431) 431 B
 inconclusive reasons: (none)
@@ -902,8 +926,11 @@ warnings: (none)
 
 The human renderer is bounded at 4 MiB like preview's rendered diff
 (`DIFF_OUTPUT_BYTES` precedent); overflow truncates listings with an explicit
-`(truncated)` marker. Inconclusive reasons are always rendered when present —
-fail-closed UX depends on showing *why* an audit could not decide.
+`(truncated)` marker. Formatting-only regions get their own bounded listing
+block, mirroring the JSON `formatting[]` array, so rewritten-but-equivalent
+edits are visible without reading JSON. Inconclusive reasons are always
+rendered when present — fail-closed UX depends on showing *why* an audit could
+not decide.
 
 ### 11.3 Bounded rendering
 
@@ -914,7 +941,7 @@ cap. One policy table governs every cap:
 | Cap exceeded | Mechanism | Consequence |
 |---|---|---|
 | `regions[]` entry cap (2,000) | deterministic drop, smallest conserved regions first | silent drop + `omitted_region_count` sibling; **not** fatal |
-| `unmatched[]` / `formatting[]` caps | deterministic drop of lowest-priority entries | sets `report_truncated`; **fatal** (§9.3) — unlisted unmatched regions must never imply absence |
+| `unmatched[]` / `formatting[]` listing caps (200 entries each, §10) | deterministic drop of lowest-priority entries | sets `report_truncated`; **fatal** (§9.3) — unlisted unmatched regions must never imply absence |
 | serialized report > 16 MiB | running byte budget during assembly | same as above: drop listings; if even the reserved skeleton (totals, verdict, reasons) cannot fit, emit the standard error envelope with `RESOURCE_LIMIT_EXCEEDED` instead of a report |
 
 Truncation therefore can never manufacture a `pass`: any fatal row downgrades
