@@ -402,16 +402,24 @@ Pipeline per changed pair `(before, after)`:
     gap, trim common byte prefix/suffix of the two gap slices; whatever
     remains on the before side is one candidate removed region (the after-side
     remainder is recorded as this region's paired insertion context, used only
-    by the formatting check in §8.7). Only gap-derived regions from modified
-    pairs carry paired context; deleted-file and fallback regions have none
-    and are therefore never formatting-classified.
+    by the formatting check in §8.7). Only deleted-file regions lack paired
+    context — there is no counterpart tree — so they are never
+    formatting-classified.
 5. **Fallback applies only when anchoring produced no usable brackets** — zero
-    anchor pairs in the middle, or the anchor pass exceeded its work budget —
-    in which case the entire before-middle becomes one coarse removed region
-    (equivalently, one gap between the sentinels). Bracketed gaps are handled
-    by step 4 regardless of their size — a large but bracketed gap costs only
-    linear trimming, never a size-based fallback. Coarseness costs match
-    precision, never soundness, because matching happens globally next.
+    anchor pairs in the middle, or the anchor pass exceeded its internal effort
+    cap (see below) — in which case the entire before-middle becomes one coarse
+    removed region, equivalently one gap between the sentinels. Its after-side
+    remainder — the post-trim after-middle — is recorded as the region's paired
+    insertion context exactly as in step 4, so fallback regions participate in
+    §8.7 classification and §8.8 insertion accounting like any other
+    gap-derived region. Bracketed gaps are handled by step 4 regardless of
+    their size — a large but bracketed gap costs only linear trimming, never a
+    size-based fallback. Coarseness costs match precision, never soundness,
+    because matching happens globally next. Budget semantics: the anchor pass
+    charges a soft effort cap against the extraction pool; breaching the cap
+    degrades only that file pair to the coarse fallback without exhausting the
+    pool, while genuine extraction-pool exhaustion remains governed by §10's
+    stop-and-`unanalyzed` rule and preempts fallback.
 6. Deleted files contribute one region covering the whole file (empty files
    contribute nothing); such regions carry no paired insertion context.
 
@@ -420,8 +428,8 @@ bytes, lazily derivable line span. Adjacent regions separated by fewer than
 `merge_gap_bytes` (default 0) are not merged in v1; merging is unnecessary
 because fragment matching tolerates interior gaps (§8.5).
 
-Complexity: linear in input plus LIS cost of anchor count; worst-case fallback
-is constant time per file. Total extraction work charges the budget in §10.
+Complexity: linear in input plus LIS cost of anchor count; fallback adds only
+a single whole-middle trim. Total extraction work charges the budget in §10.
 
 ### 8.2 Head-corpus index (built once)
 
@@ -451,7 +459,8 @@ the head tree (deleted files obviously cannot host content):
   `region_len` bytes, so end-of-file positions match correctly.
 - **Hot-bucket suppression:** any key whose position vector exceeds
   `hot_bucket_limit` (default 64) is marked hot and excluded from probing
-  (candidate generation; distinct from §8.1's line anchoring). This makes pathological inputs (runs of `' '`, minified bundles, lockfiles)
+  (candidate generation; distinct from §8.1's line anchoring). This makes
+  pathological inputs (runs of `' '`, minified bundles, lockfiles)
   linear instead of quadratic; hot stretches can still be matched through
   neighboring cold windows (§8.3–§8.5). Note that hotness depends on head-tree
   frequency: identical removed content may anchor cleanly in one repository
@@ -605,9 +614,9 @@ Consumption is the soundness core:
   deliberately does *not* equate intra-line spacing changes or deleted line
   breaks: joining two statements yields one nonempty line where there were
   two, so the sequences differ and the region stays unmatched.
-- Applicability is narrow by construction: deleted-file regions and fallback
-  regions carry no paired remainder (§8.1) and are never formatting-
-  classified. Known caveat, documented for reviewers: content inside multi-
+- Applicability is narrow by construction: deleted-file regions carry no
+  paired remainder (§8.1) and are never formatting-classified. Known caveat,
+  documented for reviewers: content inside multi-
   line string/template literals whose lines begin or end with spaces can be
   misclassified as formatting; `--count-formatting` restores strict failure
   semantics for reviewers who care. A second consequence of extraction-time
@@ -989,8 +998,10 @@ nothing new. The engine never touches `std::fs`.
 Unit tests (each module, `*_should_*` names):
 
 - classification table incl. digest ties, created/deleted edges;
-- extraction: known small diffs produce exact expected regions; per-stretch
-  fallback triggers on sparse-anchor synthetic input while bracketed gaps stay
+- extraction: known small diffs produce exact expected regions; fallback
+  triggers only when a middle yields zero anchor pairs (or the anchor pass
+  exhausts its effort cap), collapsing the entire before-middle into one
+  coarse region, while sparse-but-present anchors keep large bracketed gaps
   fine-grained; LIS tie-breaking determinism; CRLF/CR/LF mixes; unterminated
   tails; empty files; fully-deleted files;
 - index: hot-bucket suppression thresholds, collision safety (forced via
@@ -1140,8 +1151,8 @@ Risks and mitigations:
   snapshot limits; manifest mode scopes big monorepos; index memory is
   released before report assembly.
 - **Anchor-quality variance across languages:** uniqueness anchoring is
-  language-agnostic; sparse-anchor fallback keeps results sound (coarser
-  regions) rather than wrong.
+  language-agnostic; zero-anchor / budget-exhaustion fallback keeps results
+  sound (coarser regions) rather than wrong.
 - **User confusion between `fail` and `inconclusive`:** docs lead with the
   one-sentence meaning of each; reasons arrays make inconclusive self-
   describing.
