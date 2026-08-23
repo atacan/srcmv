@@ -314,3 +314,221 @@ fn representable_content_boundaries(text: &str) -> Vec<u64> {
     }
     boundaries
 }
+
+#[test]
+fn byte_to_user_line_scalar_maps_content_offsets_across_all_terminators() {
+    let snapshot = Snapshot::new("ab\ncd\r\nef\rgh");
+    let mut converter = snapshot.converter(SupportedPositionEncoding::Utf8);
+
+    let content = [
+        (0, (1, Some(1))),
+        (1, (1, Some(2))),
+        (3, (2, Some(1))),
+        (4, (2, Some(2))),
+        (7, (3, Some(1))),
+        (8, (3, Some(2))),
+        (10, (4, Some(1))),
+        (11, (4, Some(2))),
+    ];
+    for (offset, expected) in content {
+        assert_eq!(
+            converter.byte_to_user_line_scalar(offset),
+            Ok(expected),
+            "content offset {offset}"
+        );
+    }
+
+    // EOF exactly at the end of an unterminated final line is representable.
+    assert_eq!(converter.byte_to_user_line_scalar(12), Ok((4, Some(3))));
+}
+
+#[test]
+fn byte_to_user_line_scalar_reports_lines_without_columns_inside_terminators() {
+    let snapshot = Snapshot::new("ab\ncd\r\nef\rgh\n");
+    let mut converter = snapshot.converter(SupportedPositionEncoding::Utf8);
+
+    // An offset exactly at the content end reports the exclusive past-end
+    // column, matching half-open range ends.
+    for (offset, expected) in [
+        (2, (1, Some(3))),  // LF terminating "ab"
+        (5, (2, Some(3))),  // CR opening the CRLF after "cd"
+        (9, (3, Some(3))),  // CR terminating "ef"
+        (12, (4, Some(3))), // past-end column of unterminated-content line "gh"
+    ] {
+        assert_eq!(
+            converter.byte_to_user_line_scalar(offset),
+            Ok(expected),
+            "content-end offset {offset}"
+        );
+    }
+
+    // Only a byte strictly beyond the content end has no scalar column.
+    assert_eq!(converter.byte_to_user_line_scalar(6), Ok((2, None)));
+    assert_eq!(converter.byte_to_user_line_scalar(12), Ok((4, Some(3))));
+    assert_eq!(converter.byte_to_user_line_scalar(13), Ok((4, None)));
+}
+
+#[test]
+fn byte_to_user_line_scalar_handles_blank_lines_and_crlf_interiors() {
+    let snapshot = Snapshot::new("\n\r\n\r");
+    let mut converter = snapshot.converter(SupportedPositionEncoding::Utf16);
+
+    for (offset, expected) in [
+        (0, (1, Some(1))),
+        (1, (2, Some(1))),
+        (2, (2, None)), // strictly inside the CRLF terminator
+        (3, (3, Some(1))),
+    ] {
+        assert_eq!(
+            converter.byte_to_user_line_scalar(offset),
+            Ok(expected),
+            "offset {offset}"
+        );
+    }
+}
+
+#[test]
+fn byte_to_user_line_scalar_counts_astral_scalars_identically_for_every_encoding() {
+    let snapshot = Snapshot::new("é🙂z\n🙂w");
+    for encoding in [
+        SupportedPositionEncoding::Utf8,
+        SupportedPositionEncoding::Utf16,
+        SupportedPositionEncoding::Utf32,
+    ] {
+        let mut converter = snapshot.converter(encoding);
+
+        assert_eq!(converter.byte_to_user_line_scalar(0), Ok((1, Some(1))));
+        assert_eq!(converter.byte_to_user_line_scalar(2), Ok((1, Some(2))));
+        assert_eq!(converter.byte_to_user_line_scalar(6), Ok((1, Some(3))));
+        assert_eq!(converter.byte_to_user_line_scalar(7), Ok((1, Some(4))));
+        assert_eq!(converter.byte_to_user_line_scalar(8), Ok((2, Some(1))));
+        assert_eq!(converter.byte_to_user_line_scalar(12), Ok((2, Some(2))));
+        assert_eq!(converter.byte_to_user_line_scalar(13), Ok((2, Some(3))));
+    }
+}
+
+#[test]
+fn byte_to_user_line_scalar_rejects_unrepresentable_offsets_fail_closed() {
+    let empty = Snapshot::new("");
+    let mut converter = empty.converter(SupportedPositionEncoding::Utf8);
+    assert_eq!(
+        converter.byte_to_user_line_scalar(0),
+        Err(PositionError::ByteNotRepresentable)
+    );
+
+    let snapshot = Snapshot::new("éabc");
+    let mut converter = snapshot.converter(SupportedPositionEncoding::Utf8);
+    assert_eq!(
+        converter.byte_to_user_line_scalar(1),
+        Err(PositionError::ByteNotRepresentable)
+    );
+    // "éabc" is five bytes: its EOF is representable, one past it is not.
+    assert_eq!(converter.byte_to_user_line_scalar(5), Ok((1, Some(5))));
+    assert_eq!(
+        converter.byte_to_user_line_scalar(6),
+        Err(PositionError::ByteNotRepresentable)
+    );
+}
+
+#[test]
+fn byte_to_user_line_scalar_charges_only_column_scans_against_the_work_budget() {
+    let snapshot = Snapshot::new("abcdef");
+
+    let mut below = PositionConverter::new(
+        &snapshot.text,
+        &snapshot.index,
+        SupportedPositionEncoding::Utf32,
+        PositionLimits {
+            maximum_code_points_scanned: 2,
+        },
+    )
+    .expect("test index should describe its snapshot");
+    assert_eq!(
+        below.byte_to_user_line_scalar(3),
+        Err(PositionError::WorkLimitExceeded)
+    );
+    assert_eq!(below.code_points_scanned(), 2);
+
+    let mut at_limit = PositionConverter::new(
+        &snapshot.text,
+        &snapshot.index,
+        SupportedPositionEncoding::Utf32,
+        PositionLimits {
+            maximum_code_points_scanned: 3,
+        },
+    )
+    .expect("test index should describe its snapshot");
+    assert_eq!(at_limit.byte_to_user_line_scalar(3), Ok((1, Some(4))));
+    assert_eq!(at_limit.code_points_scanned(), 3);
+
+    let mut eof_column = PositionConverter::new(
+        &snapshot.text,
+        &snapshot.index,
+        SupportedPositionEncoding::Utf32,
+        PositionLimits {
+            maximum_code_points_scanned: 0,
+        },
+    )
+    .expect("test index should describe its snapshot");
+    // EOF at the end of an unterminated final line still resolves a column,
+    // so it consumes the same charged scan as any other content offset.
+    assert_eq!(
+        eof_column.byte_to_user_line_scalar(6),
+        Err(PositionError::WorkLimitExceeded)
+    );
+
+    let terminated = Snapshot::new("ab\r\ncd");
+    let mut terminator_lookup = PositionConverter::new(
+        &terminated.text,
+        &terminated.index,
+        SupportedPositionEncoding::Utf32,
+        PositionLimits {
+            maximum_code_points_scanned: 0,
+        },
+    )
+    .expect("test index should describe its snapshot");
+    // Line-only lookups never scan content and never consume the budget.
+    assert_eq!(terminator_lookup.byte_to_user_line_scalar(3), Ok((1, None)));
+    assert_eq!(terminator_lookup.code_points_scanned(), 0);
+}
+
+#[test]
+fn every_representable_content_boundary_round_trips_through_user_coordinates() {
+    let content_variants = ["", "a", "é", "🙂", "aé🙂"];
+    let terminators = ["", "\n", "\r", "\r\n"];
+
+    for first in content_variants {
+        for first_terminator in terminators {
+            for second in content_variants {
+                let text = format!("{first}{first_terminator}{second}");
+                let snapshot = Snapshot::new(text.clone());
+                let mut converter = snapshot.converter(SupportedPositionEncoding::Utf16);
+                for offset in representable_content_boundaries(&snapshot.text) {
+                    let (line, column) =
+                        converter
+                            .byte_to_user_line_scalar(offset)
+                            .unwrap_or_else(|error| {
+                                panic!("boundary {offset} of {text:?} should convert: {error}")
+                            });
+                    match column {
+                        Some(column) => assert_eq!(
+                            converter.user_line_scalar_to_byte(line, column),
+                            Ok(offset),
+                            "round trip failed at boundary {offset} of {text:?}"
+                        ),
+                        // Only a byte inside a line terminator has no scalar
+                        // column; the boundary helper never emits EOF after a
+                        // final terminator.
+                        None => assert!(
+                            matches!(
+                                snapshot.text.as_bytes().get(offset as usize),
+                                Some(b'\r' | b'\n')
+                            ),
+                            "boundary {offset} of {text:?} lost its column"
+                        ),
+                    }
+                }
+            }
+        }
+    }
+}

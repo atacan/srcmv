@@ -27,6 +27,8 @@ pub const DEFAULT_MAXIMUM_SYMBOL_PATH_BYTES: u64 = 64 * 1024;
 pub const DEFAULT_MAXIMUM_CANDIDATE_STORAGE_BYTES: u64 = 64 * 1024 * 1024;
 /// Default maximum matches representable by selection protocol v1.
 pub const DEFAULT_MAXIMUM_MATCHES: usize = 1_000;
+/// Default maximum number of symbols emitted by one outline response.
+pub const DEFAULT_MAXIMUM_OUTLINE_SYMBOLS: usize = 10_000;
 /// Default maximum number of candidates retained in an ambiguity error.
 pub const DEFAULT_MAXIMUM_AMBIGUITY_CANDIDATES: usize = 50;
 const MAXIMUM_LSP_UINTEGER: u32 = 2_147_483_647;
@@ -803,6 +805,19 @@ fn prepare_candidates<'a>(
     });
     candidates.dedup_by(|left, right| duplicate_key_equal(left, right));
     candidates
+}
+
+/// Orders every normalized symbol with the frozen candidate comparator and
+/// coalesces exact duplicates.
+///
+/// This is the same treatment all-match resolution applies, extracted so the
+/// outline surface shares one deterministic order and dedup key. Results are
+/// ordered by enclosing-range start/end bytes, kind spelling then numeric
+/// value, symbol path, name, reveal-range start/end, then detail; duplicates
+/// coalesce by `(lsp_range, kind, symbol_path, name)`.
+#[must_use]
+pub fn order_unique_candidates(symbols: &[NormalizedSymbol]) -> Vec<&NormalizedSymbol> {
+    prepare_candidates(symbols.iter())
 }
 
 fn finish_resolution(

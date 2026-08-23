@@ -25,7 +25,10 @@ Read [references/workflow.md](references/workflow.md) before executing any mutat
 
 ## Keep the operation in scope
 
-srcmv moves or copies line or byte ranges. Its read-only `select` command can discover a declaration's byte range through a trusted, installed language server; selection and editing remain separate invocations. srcmv does not bundle language servers, update imports, format code, normalize line endings, create parent directories, or provide atomic multi-file visibility. Treat follow-up semantic edits as separate work and test the final workspace.
+srcmv moves or copies line or byte ranges. Its read-only `select` and `outline`
+commands can discover declarations through a trusted, installed language
+server — `outline` lists every symbol in one file, `select` resolves one exact
+range; selection and editing remain separate invocations. srcmv does not bundle language servers, update imports, format code, normalize line endings, create parent directories, or provide atomic multi-file visibility. Treat follow-up semantic edits as separate work and test the final workspace.
 
 Before use, confirm `srcmv` is available and query `capabilities --json` when version or feature support is uncertain. See [references/cli-protocol.md](references/cli-protocol.md) for command grammar, response fields, protocol version, and error categories.
 

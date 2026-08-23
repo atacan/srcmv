@@ -509,3 +509,87 @@ fn stderr_tail_remains_bounded_and_finish_reaps_child() {
     assert_eq!(transport.stderr_tail(), b"efghijkl");
     assert_process_reaped(process_id);
 }
+
+fn large_notification() -> Value {
+    json!({"jsonrpc":"2.0","method":"server/ready","params":{"payload":"x".repeat(20 * 1024)}})
+}
+
+fn split_frame(value: &Value, split: usize) -> (String, String) {
+    let framed = frame(value);
+    (framed[..split].to_owned(), framed[split..].to_owned())
+}
+
+fn chunked_output(first_part: &str, second_part: &str, delay_seconds: &str) -> ProcessSpec {
+    ProcessSpec::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\"; sleep \"$3\"; printf '%s' \"$2\"; sleep 60",
+            "transport-test",
+        ])
+        .arg(first_part)
+        .arg(second_part)
+        .arg(delay_seconds)
+}
+
+#[test]
+fn multi_chunk_frame_is_delivered_within_the_active_deadline() {
+    // The first write is smaller than the client's 8 KiB read chunk and the
+    // tail is delayed, so the decoder holds partial input across wakes.
+    let (first_part, second_part) = split_frame(&large_notification(), 4096);
+    let specification = chunked_output(&first_part, &second_part, "1");
+    let mut transport =
+        Transport::spawn(&specification, TransportLimits::default()).expect("child should spawn");
+
+    let message = transport
+        .next_incoming(deadline_after(OPERATION))
+        .expect("the delayed frame remainder should arrive within the deadline");
+    assert!(matches!(
+        &message,
+        IncomingMessage::Notification(notification)
+            if notification.method == "server/ready"
+                && notification.params.as_ref().is_some_and(|params| {
+                    params["payload"].as_str().is_some_and(|payload| payload.len() == 20 * 1024)
+                })
+    ));
+    abort_and_assert_reaped(&mut transport);
+}
+
+#[test]
+fn incomplete_frame_waits_until_the_deadline_before_expiring() {
+    let (first_part, second_part) = split_frame(&large_notification(), 4096);
+    let specification = chunked_output(&first_part, &second_part, "30");
+    let mut transport =
+        Transport::spawn(&specification, TransportLimits::default()).expect("child should spawn");
+
+    let started = Instant::now();
+    let result = transport.next_incoming(deadline_after(Duration::from_secs(1)));
+    let elapsed = started.elapsed();
+
+    assert!(matches!(result, Err(TransportError::DeadlineExceeded)));
+    assert!(
+        elapsed >= Duration::from_millis(900),
+        "a mid-frame wait must not report an early expiry: {elapsed:?}"
+    );
+    assert!(elapsed < Duration::from_secs(5));
+    abort_and_assert_reaped(&mut transport);
+}
+
+#[test]
+fn deadline_passing_mid_frame_reports_expiry_without_waiting() {
+    let (first_part, second_part) = split_frame(&large_notification(), 4096);
+    let specification = chunked_output(&first_part, &second_part, "30");
+    let mut transport =
+        Transport::spawn(&specification, TransportLimits::default()).expect("child should spawn");
+    thread::sleep(Duration::from_millis(300));
+
+    let started = Instant::now();
+    let result = transport.next_incoming(deadline_after(Duration::from_millis(50)));
+    let elapsed = started.elapsed();
+
+    assert!(matches!(result, Err(TransportError::DeadlineExceeded)));
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "an expired deadline must not keep waiting for the frame tail: {elapsed:?}"
+    );
+    abort_and_assert_reaped(&mut transport);
+}

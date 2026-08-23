@@ -63,6 +63,23 @@ server ranges. UTF-16, UTF-32, and user scalar-column scans charge one unit per
 Unicode scalar examined. UTF-8 boundary checks that can be performed in
 constant time do not consume that work budget.
 
+## Outline limits
+
+One `srcmv outline` invocation shares every selection bound above: the same
+snapshot, normalization, position-conversion, session, and transport defaults.
+The frozen 1,000-match selection limit does not apply; one additional emission
+cap does:
+
+| Resource | Limit |
+|---|---:|
+| Successful outline symbols | 10,000 |
+| Serialized outline JSON or human output | 16 MiB |
+
+The symbol count is checked after ordering, deduplication, and `--kind`
+filtering, before any serialization; exceeding it fails closed with
+`LSP_RESOURCE_LIMIT_EXCEEDED` (resource `outline_symbols`) and no partial
+output.
+
 The language-server configuration and session have independent bounds:
 
 | Resource | Limit |

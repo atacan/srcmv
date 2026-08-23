@@ -16,6 +16,7 @@ Release v0.1.0 implements protocol version 1 and plan-hash version 1. Query capa
 ```text
 srcmv [--workspace PATH] inspect --path RELATIVE [--path RELATIVE ...] --json
 srcmv [--workspace PATH] select --path RELATIVE (--name NAME | --at-byte OFFSET | --at-line LINE [--at-column COLUMN]) [--kind KIND] [--all] [--extent declaration_lines|symbol] --json
+srcmv [--workspace PATH] outline --path RELATIVE [--kind KIND ...] [--server-id ID | --server-program PROGRAM --language-id ID [--server-arg ARG ...]] --json
 srcmv [--workspace PATH] apply --request FILE_OR_DASH --preview [--json] [--no-diff] [--summary]
 srcmv [--workspace PATH] apply --request FILE_OR_DASH --commit --expect-plan DIGEST [--json]
 srcmv [--workspace PATH] recover --list [--json]
@@ -37,6 +38,15 @@ srcmv protocol-version --json
 language server. Each match's `request_source` is directly composable as a
 protocol-v1 operation source; preserve it unchanged. See
 [semantic-selection.md](semantic-selection.md).
+
+`outline` lists every document symbol in one file with `outline_protocol_version:
+1`: name, standardized `symbol_kind`, complete `symbol_path`, derived `depth`,
+one-based inclusive `start_line`/`end_line`, one-based scalar columns (the
+exclusive `end_column` is schema-nullable but always populated in v1), raw
+zero-based `lsp_range`/`lsp_selection_range` audit coordinates, and the
+validated half-open byte `selector`. Records are deterministically ordered and
+deduplicated; empty listings are successes. Feed a selector into
+`select --at-byte` to obtain the copy-ready edit fragment.
 
 Preview returns:
 

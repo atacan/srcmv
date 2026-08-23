@@ -52,6 +52,22 @@ read-only selection-v1 surface to obtain them from a trusted, installed language
 server. This is discovery before the normal edit workflow; it does not alter the
 protocol-v1 request or combine selection and editing into one invocation.
 
+On very large files, discover with `outline` first and select second. The
+outline listing gives every symbol's breadcrumb, depth, lines, and validated
+half-open byte selector; pick the intended entry and feed its selector straight
+into a position query to obtain the copy-ready `request_source` fragment:
+
+```bash
+srcmv --workspace /path/to/repo outline --path src/huge.rs --json > outline.json
+srcmv --workspace /path/to/repo select \
+  --path src/huge.rs \
+  --at-byte "$(jq -r '.symbols[0].selector.start' outline.json)" \
+  --json > selection.json
+```
+
+An optional repeatable `--kind function --kind method` filter narrows large
+listings cheaply before picking an entry.
+
 Use exactly one query form:
 
 ```bash

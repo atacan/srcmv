@@ -1,78 +1,90 @@
 # srcmv v0.5.0 release notes
 
-This release adds `srcmv audit-conservation`, a read-only command that compares
-two arbitrary directory trees — typically a pull-request base commit tree and
-head commit tree — and verifies at the byte level that every substantial byte
-region removed from the before tree reappears exactly somewhere in the after
-tree. The audit works identically whether or not srcmv performed any of the
-edits: it consults no workspace state, accepts exactly two trees supplied on
-the command line, writes nothing, and holds no locks.
+This release adds `srcmv outline`, a read-only companion to `select` that lists
+every document symbol in one file through a trusted, installed language server.
+It is a minor release: purely additive, with no changes to the edit protocol,
+existing commands, or frozen registries.
 
-## Highlights
+## The outline command
 
-- Byte-exact conservation verification. Removed regions are matched by exact
-  byte equality against an index of the after tree, with one-to-one exclusive
-  consumption so one surviving occurrence can never satisfy two removals.
-  Blocks that moved between files, were reordered inside one file, were split
-  across destinations, or live inside renamed files are all credited through
-  whole-region and fragment matching. Identical repeated blocks are counted
-  soundly and flagged `pairing_ambiguous`.
-- A three-valued verdict model. `pass` means every substantial removed byte is
-  byte-verified against an exclusively consumed interval (with two reported
-  carve-outs: bytes below the substantiality floor and formatting-only
-  rewrites). `fail` means at least one substantial removed region has no
-  remaining occurrence. Matching is greedy without backtracking, so rare
-  overlap conflicts may `fail` where a perfect packing exists — the audit can
-  under-credit but never over-credit.
-- Conservative incompleteness with machine-readable reasons. Resource
-  exhaustion, truncated reports, skipped inputs, strict-uniqueness ambiguity,
-  and content too ubiquitous to anchor (`ambiguous_common`) all yield
-  `inconclusive` with structured reasons instead of a manufactured claim. A
-  whitespace-run or lockfile-like deletion is reported as "cannot decide",
-  not as a pass.
-- Bounded reports. The JSON report is capped at 16 MiB with deterministic
-  truncation markers; listings are bounded; overflow downgrades the verdict to
-  `inconclusive` rather than hiding unmatched regions. Digests (SHA-256) on
-  every record let reviewers verify any claim independently.
-- Two ingestion forms per side: recursive directory reads (deterministic
-  sorted traversal, regular files only, symlinks rejected) and `@MANIFEST`
-  files listing normalized relative paths, so large repositories can be scoped
-  to a reviewable subset. Git integration stays external: materialize commits
-  with ordinary `git worktree` or `git archive` plumbing outside srcmv.
-- Platform posture is unchanged. The supported rows remain Linux x86_64 on
-  local ext4 and macOS arm64 on local APFS; `scripts/qualify-platform.sh`
-  qualifies both. Every limit — files per tree, file and total bytes, work
-  units, hot-bucket suppression, report caps — degrades audits to
-  `inconclusive` fail-closed rather than to hangs or unbounded output.
+`srcmv outline` runs exactly one `textDocument/documentSymbol` request over the
+same session lifecycle, trusted-descriptor resolution, and snapshot limits as
+semantic selection, then emits every symbol as flat outline-v1 records:
 
-## Frozen contracts unaffected
+- name, standardized `symbol_kind` (selection-v1 spelling; `"unknown"` for
+  non-standard numeric kinds), complete `symbol_path`, and derived `depth`;
+- one-based inclusive `start_line`/`end_line`, one-based scalar columns with an
+  exclusive past-end `end_column` (schema-nullable, but always populated by the
+  frozen v1 pipeline);
+- raw zero-based `lsp_range`/`lsp_selection_range` audit coordinates;
+- the validated half-open byte `selector` of the enclosing symbol range — the
+  same coordinate `select --at-byte` consumes, so an agent can go from an
+  outline entry straight to a copy-ready selection.
 
-The audit is an independently versioned read-only surface
-(`conservation-audit-v1`) following the `selection-v1` precedent. Protocol v1,
-plan-hash version 1, transaction-record version 1, the frozen edit error and
-warning registries, capabilities output, and every existing command's output
-are unchanged byte-for-byte. The engine performs zero syscalls by
-construction: it accepts only borrowed in-memory tree slices, gains no
-`std::fs` usage or new dependencies in its core crate (enforced by the source
-scan in `scripts/audit-unsafe.sh`), and no request, journal, plan-hash,
-identity-hash, or log type appears anywhere in it.
+Records are ordered by a deterministic comparator regardless of server child
+order, exact duplicates coalesce, an optional repeatable `--kind KIND` filter
+narrow large listings, and an empty listing is a success. Human output renders
+an indented tree; `--json` emits a single line carrying
+`outline_protocol_version: 1`.
 
-Completed audits exit 0 on all three verdicts — the verdict is data, not a
-process failure — so automation selects with `jq -e '.verdict == "pass"'`.
-Failures reuse the existing error-code table and exit codes unchanged.
+```console
+srcmv --workspace /path/to/repo outline --path src/huge.rs \
+  --kind function --kind method --json > outline.json
+```
 
-## Limits
+The normative Draft 2020-12 success schema is
+`docs/schema/outline-v1/response.schema.json`; hand-authored contract examples
+live under `tests/golden/outline-v1`. v1 deliberately omits `request_source`
+and payload digests: pick an entry, then run `select --at-byte` for composition.
 
-The audit's resource limits join the house table in
-`docs/resource-limits.md`, with below/at/above boundary coverage in tests.
-Performance baseline numbers are recorded informationally in
-`docs/performance-baseline.json`; they are observations, not gates.
+## Errors and limits
 
-## Documentation
+Outline failures carry `outline_protocol_version: 1` and their own registry:
+`INVALID_OUTLINE_QUERY` (exit 2), the shared `LSP_*` support spellings reused
+verbatim (exit 4), and `OUTLINE_INTERNAL_ERROR` (exit 8). There is no conflict
+category because outline performs no query matching; see `docs/protocol.md`
+for the complete tables. All selection snapshot, normalization,
+position-conversion, session, and transport limits apply unchanged, plus one
+new fail-closed bound: at most 10,000 emitted symbols (resource
+`outline_symbols`). Serialized output stays bounded by the global 16 MiB
+exact-response limit.
 
-- Command guide and Git workflow: `docs/conservation-audit.md`
-- Normative report schema: `docs/schema/conservation-audit-v1/`
-- Golden reports: `tests/golden/conservation-audit-v1/`
-- Implementation plan and acceptance criteria:
-  `docs/conservation-audit-plan.md`
-- Repository overview: `README.md`
+## Transport robustness shared with select
+
+Release qualification exposed a pre-existing race in the language-server
+transport: a response frame split across multiple reads could intermittently
+fail as `LSP_TIMEOUT` while most of the deadline remained. The transport now
+keeps awaiting incomplete frames within the active deadline. This fixes
+spurious timeouts for `select` identically; precedence rules, resource limits,
+and genuine deadline expiry are unchanged, and regression coverage pins the
+wait-versus-expiry boundary.
+
+## Compatibility
+
+Purely additive. `capabilities --json` and `selection-capabilities --json`
+output is unchanged; outline is not advertised there in this release. Protocol
+version 1, plan-hash version 1, transaction-record version 1, the edit error
+and warning registries, and all selection-v1 contracts are untouched.
+Language servers remain unbundled; outline uses the same trusted descriptors
+or explicit `--server-program` choice as selection.
+
+## Qualification
+
+Bounded fake-server suites cover lifecycle, ranges, ordering, filtering,
+limits, degenerate server outputs, and failures on both supported OS rows, and
+remain authoritative for compatibility and failure qualification. Real-server
+smoke qualification follows `docs/releasing.md` (`scripts/qualify-lsp.sh`,
+best-effort) at publish time; recorded server versions apply to that evidence
+only and do not bundle or certify every language server version.
+
+## Assets
+
+The release contains exactly these assets:
+
+- `srcmv-v0.5.0-aarch64-apple-darwin.tar.gz`
+- `srcmv-v0.5.0-x86_64-unknown-linux-gnu.tar.gz`
+- `SHA256SUMS`
+
+The two archives are built and tested on their matching qualified native GitHub
+runner. Publishing an archive does not extend support beyond Linux x86_64 on
+local ext4 and macOS arm64 on local APFS.

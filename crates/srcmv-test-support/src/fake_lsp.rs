@@ -16,6 +16,8 @@ use serde_json::{Value, json};
 
 const MAX_FAKE_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FAKE_HEADER_BYTES: usize = 64 * 1024;
+/// Tiny distinct symbols served by the outline-count-limit scenario.
+const OUTLINE_LIMIT_SYMBOL_COUNT: usize = 10_001;
 
 /// Named behavior exposed by the fake language-server executable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,11 +92,17 @@ pub enum FakeLspScenario {
     NotificationFlood,
     /// Sends more notifications than the production per-selection limit.
     NotificationLimitExceeded,
+    /// Returns ~120 well-formed nested symbols spanning several depths and kinds.
+    ManySymbols,
+    /// Returns more tiny distinct symbols than the outline emission bound.
+    SymbolCountLimitExceeded,
+    /// Returns a symbol whose name contains terminal-control characters.
+    EscapedNameSymbols,
 }
 
 impl FakeLspScenario {
     /// All public scenario names accepted by the fixture executable.
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 38] = [
         Self::Success,
         Self::SuccessWithConfiguration,
         Self::InitializeError,
@@ -130,6 +138,9 @@ impl FakeLspScenario {
         Self::AmbiguousSymbols,
         Self::NotificationFlood,
         Self::NotificationLimitExceeded,
+        Self::ManySymbols,
+        Self::SymbolCountLimitExceeded,
+        Self::EscapedNameSymbols,
     ];
 
     /// Returns the stable command-line spelling of this scenario.
@@ -171,6 +182,9 @@ impl FakeLspScenario {
             Self::AmbiguousSymbols => "ambiguous-symbols",
             Self::NotificationFlood => "notification-flood",
             Self::NotificationLimitExceeded => "notification-limit-exceeded",
+            Self::ManySymbols => "many-symbols",
+            Self::SymbolCountLimitExceeded => "symbol-count-limit-exceeded",
+            Self::EscapedNameSymbols => "escaped-name-symbols",
         }
     }
 }
@@ -621,6 +635,14 @@ fn symbol_result(scenario: FakeLspScenario, document_uri: &str) -> Value {
             let symbol = alpha_symbol();
             json!([symbol, alpha_symbol()])
         }
+        FakeLspScenario::ManySymbols => many_symbols(),
+        FakeLspScenario::SymbolCountLimitExceeded => symbol_count_limit_exceeded(),
+        FakeLspScenario::EscapedNameSymbols => json!([{
+            "name": "bad\u{1b}name",
+            "kind": 5,
+            "range": range(2, 0, 6, 1),
+            "selectionRange": range(2, 0, 2, 3)
+        }]),
         FakeLspScenario::AmbiguousSymbols => json!([
             {
                 "name": "First",
@@ -670,6 +692,67 @@ fn deep_symbols(depth: usize) -> Value {
         });
     }
     json!([symbol])
+}
+
+/// Builds 120 well-formed symbols spanning three depths: twelve classes, each
+/// holding three modules of two functions, all with distinct contained ranges.
+fn many_symbols() -> Value {
+    let groups = (0..12)
+        .map(|group| {
+            let base_line = 12 * group;
+            let modules = (0..3)
+                .map(|module| {
+                    let module_line = base_line + 1 + 3 * module;
+                    let functions = (0..2)
+                        .map(|index| {
+                            json!({
+                                "name": format!("Fn{group}_{module}_{index}"),
+                                "kind": 12,
+                                "range": range(module_line + index, 4, module_line + index, 20),
+                                "selectionRange": range(
+                                    module_line + index,
+                                    8,
+                                    module_line + index,
+                                    12
+                                )
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    json!({
+                        "name": format!("Module{group}_{module}"),
+                        "kind": 2,
+                        "range": range(module_line, 2, module_line + 2, 3),
+                        "selectionRange": range(module_line, 8, module_line, 10),
+                        "children": functions
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "name": format!("Group{group}"),
+                "kind": 5,
+                "range": range(base_line, 0, base_line + 11, 1),
+                "selectionRange": range(base_line, 6, base_line, 11),
+                "children": modules
+            })
+        })
+        .collect::<Vec<_>>();
+    json!(groups)
+}
+
+/// Builds more distinct tiny symbols than the outline emission bound accepts.
+fn symbol_count_limit_exceeded() -> Value {
+    Value::Array(
+        (0..OUTLINE_LIMIT_SYMBOL_COUNT)
+            .map(|index| {
+                json!({
+                    "name": format!("s{index}"),
+                    "kind": 12,
+                    "range": range(0, 0, 0, 1),
+                    "selectionRange": range(0, 0, 0, 1)
+                })
+            })
+            .collect(),
+    )
 }
 
 fn range(start_line: u32, start_character: u32, end_line: u32, end_character: u32) -> Value {

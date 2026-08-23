@@ -1,0 +1,23 @@
+{
+  "outline_protocol_version": 1,
+  "workspace_identity_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "source": {
+    "path": "source.rs",
+    "sha256": "sha256:fc7562188b897588d32ddf159a0e763be18e824ba9e3bd4606cc3a70fdfa124f",
+    "byte_length": 78
+  },
+  "server": {
+    "configuration_id": null,
+    "reported_name": "srcmv-fake-lsp",
+    "reported_version": "1",
+    "position_encoding": "utf-16"
+  },
+  "symbols": [],
+  "warnings": [
+    {
+      "code": "OBSERVATION_MAY_BE_STALE",
+      "context": {},
+      "message": "no existing srcmv lock coordinated this read-only observation"
+    }
+  ]
+}

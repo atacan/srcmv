@@ -33,6 +33,7 @@ use srcmv_protocol::{
 };
 
 mod audit;
+mod outline;
 mod preview;
 mod select;
 
@@ -70,6 +71,7 @@ struct Cli {
 enum Command {
     Inspect(InspectArgs),
     Select(select::SelectArgs),
+    Outline(outline::OutlineArgs),
     Apply(ApplyArgs),
     Recover(RecoverArgs),
     #[command(name = "audit-conservation")]
@@ -196,12 +198,14 @@ where
         Ok(response) => render_success(&response, stdout, stderr),
         Err(CommandFailure::Edit(report, json)) => render_error(&report, json, stdout, stderr),
         Err(CommandFailure::Selection(failure)) => render_selection_error(&failure, stdout, stderr),
+        Err(CommandFailure::Outline(failure)) => render_outline_error(&failure, stdout, stderr),
     }
 }
 
 enum CommandFailure {
     Edit(ErrorDto, bool),
     Selection(select::SelectionFailure),
+    Outline(outline::OutlineFailure),
 }
 
 fn execute(cli: Cli, stdin: &mut dyn Read, startup_umask: u32) -> Result<String, CommandFailure> {
@@ -233,6 +237,9 @@ fn execute(cli: Cli, stdin: &mut dyn Read, startup_umask: u32) -> Result<String,
         }
         Command::Select(arguments) => {
             select::execute(cli.workspace.as_deref(), arguments).map_err(CommandFailure::Selection)
+        }
+        Command::Outline(arguments) => {
+            outline::execute(cli.workspace.as_deref(), arguments).map_err(CommandFailure::Outline)
         }
         Command::Audit(arguments) => {
             let json_output = arguments.json();
@@ -1155,6 +1162,29 @@ fn render_selection_error(
     let report = failure.report();
     let written = if failure.json() {
         match srcmv_protocol::to_selection_json_line(report) {
+            Ok(line) => stdout.write_all(line.as_bytes()).is_ok(),
+            Err(_) => false,
+        }
+    } else {
+        let line = format!(
+            "srcmv: {}: {}\n",
+            report.code().as_str(),
+            escape_terminal_text(report.message())
+        );
+        stderr.write_all(line.as_bytes()).is_ok()
+    };
+
+    if written { report.exit_code() } else { 8 }
+}
+
+fn render_outline_error(
+    failure: &outline::OutlineFailure,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> u8 {
+    let report = failure.report();
+    let written = if failure.json() {
+        match srcmv_protocol::to_outline_json_line(report) {
             Ok(line) => stdout.write_all(line.as_bytes()).is_ok(),
             Err(_) => false,
         }

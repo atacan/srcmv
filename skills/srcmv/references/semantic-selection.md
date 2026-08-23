@@ -3,6 +3,12 @@
 Use `select` only to discover an exact source range. It is read-only and does
 not change the protocol-v1 inspect, preview, and guarded-commit workflow.
 
+On very large files, run the read-only outline command first to list every
+symbol with its breadcrumb, depth, lines, and validated byte selector, then use
+that selector here (`select --at-byte SELECTOR_START`) instead of searching by
+name. See [cli-protocol.md](cli-protocol.md) for the outline grammar and
+response fields.
+
 First confirm the selection surface and an appropriate trusted language server:
 
 ```bash

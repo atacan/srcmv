@@ -294,6 +294,79 @@ impl<'a> PositionConverter<'a> {
         self.byte_to_lsp_position(byte_offset)
     }
 
+    /// Converts a snapshot byte offset to its one-based physical line and,
+    /// when representable, its one-based Unicode-scalar column.
+    ///
+    /// Content offsets report the column of the offset itself; an offset at
+    /// the content end reports the column just past the final scalar, which
+    /// is the exclusive-end convention used by half-open ranges. Only offsets
+    /// strictly beyond the content end — inside a multi-byte CR/LF terminator
+    /// or at EOF after a final terminator — still report their physical line
+    /// with a `None` column. Column scans charge the cumulative work budget
+    /// one unit per examined scalar value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PositionError::ByteNotRepresentable`] when the offset exceeds
+    /// the snapshot length or splits a UTF-8 code point, or a work-limit error
+    /// while counting units.
+    pub fn byte_to_user_line_scalar(
+        &mut self,
+        byte_offset: u64,
+    ) -> Result<(u64, Option<u64>), PositionError> {
+        self.validate_user_byte(byte_offset)
+            .map_err(|_| PositionError::ByteNotRepresentable)?;
+        let line_count = self.line_index.line_count();
+        if line_count == 0 {
+            return Err(PositionError::ByteNotRepresentable);
+        }
+
+        let mut low = 1_u64;
+        let mut high = line_count;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let end = self
+                .line_index
+                .line_end(middle)
+                .ok_or(PositionError::InvalidSnapshotIndex)?;
+            if end <= byte_offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let candidate_end = self
+            .line_index
+            .line_end(low)
+            .ok_or(PositionError::InvalidSnapshotIndex)?;
+        // An offset at or past every line end can only be the content end of
+        // an unterminated final line.
+        let selected_line = if candidate_end <= byte_offset {
+            line_count
+        } else {
+            low
+        };
+        let zero_based =
+            u32::try_from(selected_line - 1).map_err(|_| PositionError::ByteNotRepresentable)?;
+        let bounds = self.line_bounds(zero_based)?;
+        let physical_end = self
+            .line_index
+            .line_end(selected_line)
+            .ok_or(PositionError::InvalidSnapshotIndex)?;
+        if byte_offset < bounds.start || byte_offset > physical_end {
+            return Err(PositionError::ByteNotRepresentable);
+        }
+        let line = u64::from(zero_based) + 1;
+        if byte_offset > bounds.content_end {
+            // Strictly inside a multi-byte terminator, or EOF after a final
+            // terminator: the physical line exists but has no scalar-column
+            // position. Offsets exactly at the content end do have one: the
+            // column just past the final scalar, matching half-open ranges.
+            return Ok((line, None));
+        }
+        Ok((line, Some(self.scalar_column_before(bounds, byte_offset)?)))
+    }
+
     fn line_bounds(&self, zero_based_line: u32) -> Result<LineBounds, PositionError> {
         let line = u64::from(zero_based_line)
             .checked_add(1)
@@ -454,6 +527,40 @@ impl<'a> PositionConverter<'a> {
         } else {
             Err(PositionError::InvalidUserPosition)
         }
+    }
+
+    fn scalar_column_before(
+        &mut self,
+        bounds: LineBounds,
+        byte_offset: u64,
+    ) -> Result<u64, PositionError> {
+        let start =
+            usize::try_from(bounds.start).map_err(|_| PositionError::InvalidSnapshotIndex)?;
+        let relative = usize::try_from(
+            byte_offset
+                .checked_sub(bounds.start)
+                .ok_or(PositionError::InvalidSnapshotIndex)?,
+        )
+        .map_err(|_| PositionError::ByteNotRepresentable)?;
+        let prefix = self
+            .text
+            .get(
+                start
+                    ..start
+                        .checked_add(relative)
+                        .ok_or(PositionError::InvalidSnapshotIndex)?,
+            )
+            .ok_or(PositionError::InvalidSnapshotIndex)?;
+        let mut scalars = 0_u64;
+        for _ in prefix.chars() {
+            self.charge_code_point()?;
+            scalars = scalars
+                .checked_add(1)
+                .ok_or(PositionError::WorkLimitExceeded)?;
+        }
+        scalars
+            .checked_add(1)
+            .ok_or(PositionError::WorkLimitExceeded)
     }
 
     fn charge_code_point(&mut self) -> Result<(), PositionError> {

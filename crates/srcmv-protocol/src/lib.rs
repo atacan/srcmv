@@ -20,6 +20,7 @@ use srcmv_core::{
 };
 
 mod audit;
+mod outline;
 mod selection;
 mod selection_capabilities;
 
@@ -27,6 +28,10 @@ pub use audit::{
     AuditInconclusiveReason, AuditInputKind, AuditNoWarnings, AuditRecordStatus, AuditRenderLimits,
     AuditReport, AuditVerdict, CONSERVATION_AUDIT_VERSION, InputTreeSummary, SkipInfo,
     audit_report_json_line, build_audit_report, build_audit_report_with_limits,
+};
+pub use outline::{
+    OUTLINE_PROTOCOL_VERSION, OutlineErrorCategory, OutlineErrorCode, OutlineErrorDto,
+    OutlineProtocolError, OutlineResponse, OutlineSymbolDto, to_outline_json_line,
 };
 pub use selection::{
     SELECTION_PROTOCOL_VERSION, SelectionByteSelectorDto, SelectionErrorCategory,

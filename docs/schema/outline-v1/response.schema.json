@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/atacan/srcmv/main/docs/schema/outline-v1/response.schema.json",
+  "title": "srcmv read-only outline protocol v1 success response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outline_protocol_version",
+    "workspace_identity_hash",
+    "source",
+    "server",
+    "symbols",
+    "warnings"
+  ],
+  "properties": {
+    "outline_protocol_version": { "const": 1 },
+    "workspace_identity_hash": { "$ref": "#/$defs/digest" },
+    "source": { "$ref": "#/$defs/source_snapshot" },
+    "server": { "$ref": "#/$defs/server" },
+    "symbols": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/symbol" }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/warning" }
+    }
+  },
+  "$defs": {
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "positive_u64": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "lsp_uinteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000]+$"
+    },
+    "known_symbol_kind": {
+      "enum": [
+        "file",
+        "module",
+        "namespace",
+        "package",
+        "class",
+        "method",
+        "property",
+        "field",
+        "constructor",
+        "enum",
+        "interface",
+        "function",
+        "variable",
+        "constant",
+        "string",
+        "number",
+        "boolean",
+        "array",
+        "object",
+        "key",
+        "null",
+        "enum_member",
+        "struct",
+        "event",
+        "operator",
+        "type_parameter"
+      ]
+    },
+    "symbol_kind": {
+      "oneOf": [
+        { "$ref": "#/$defs/known_symbol_kind" },
+        { "const": "unknown" }
+      ]
+    },
+    "byte_selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "start", "end"],
+      "properties": {
+        "kind": { "const": "bytes" },
+        "start": { "$ref": "#/$defs/u64" },
+        "end": { "$ref": "#/$defs/positive_u64" }
+      }
+    },
+    "source_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "byte_length"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "byte_length": { "$ref": "#/$defs/u64" }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configuration_id",
+        "reported_name",
+        "reported_version",
+        "position_encoding"
+      ],
+      "properties": {
+        "configuration_id": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "reported_name": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "reported_version": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "position_encoding": { "enum": ["utf-8", "utf-16", "utf-32"] }
+      }
+    },
+    "lsp_position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "character"],
+      "properties": {
+        "line": { "$ref": "#/$defs/lsp_uinteger" },
+        "character": { "$ref": "#/$defs/lsp_uinteger" }
+      }
+    },
+    "lsp_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "$ref": "#/$defs/lsp_position" },
+        "end": { "$ref": "#/$defs/lsp_position" }
+      }
+    },
+    "symbol_path": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "one_based_line": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "one_based_scalar_column": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "nullable_end_column": {
+      "type": ["null", "integer"],
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "symbol_kind",
+        "symbol_path",
+        "depth",
+        "detail",
+        "start_line",
+        "start_column",
+        "end_line",
+        "end_column",
+        "lsp_range",
+        "lsp_selection_range",
+        "selector"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "symbol_kind": { "$ref": "#/$defs/symbol_kind" },
+        "symbol_path": { "$ref": "#/$defs/symbol_path" },
+        "depth": { "$ref": "#/$defs/depth" },
+        "detail": {
+          "type": ["string", "null"],
+          "maxLength": 16384
+        },
+        "start_line": { "$ref": "#/$defs/one_based_line" },
+        "start_column": { "$ref": "#/$defs/one_based_scalar_column" },
+        "end_line": { "$ref": "#/$defs/one_based_line" },
+        "end_column": { "$ref": "#/$defs/nullable_end_column" },
+        "lsp_range": { "$ref": "#/$defs/lsp_range" },
+        "lsp_selection_range": { "$ref": "#/$defs/lsp_range" },
+        "selector": { "$ref": "#/$defs/byte_selector" }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "context"],
+      "properties": {
+        "code": { "const": "OBSERVATION_MAY_BE_STALE" },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "context": {
+          "type": "object",
+          "maxProperties": 32
+        }
+      }
+    }
+  }
+}
