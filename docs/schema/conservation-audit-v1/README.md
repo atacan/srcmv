@@ -83,7 +83,10 @@ Schema cannot express:
 
 - byte ranges are zero-based half-open `[start, end)` pairs with
   `start < end`; each source range lies within its base file bounds and each
-  destination/new-content range within its head file bounds;
+  destination/new-content range within its head file bounds — except that a
+  formatting entry's `paired_destination` may be the zero-width point
+  `[n, n)` when a formatting region's counterpart insertion context is empty
+  (pure EOL conversions), while all other byte ranges satisfy `start < end`;
 - line ranges are one-based inclusive `[first_line, last_line]` under existing
   terminator semantics and are exactly `null` for binary files (`is_binary`
   reused from preview: contains NUL or invalid UTF-8, §9.5);

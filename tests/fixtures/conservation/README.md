@@ -26,7 +26,7 @@ per scenario and are labeled as such; §15 pins them normatively only for
 | `pass-formatting/` | pure CRLF→LF conversion of a 3-line file (bytes pinned below) | verdict `pass` by default; `fail` under `--count-formatting`. Hand trace per §8.7: prefix trim consumes `alpha` and stops at the CR/LF divergence, suffix trim leaves one `\n`; the middles anchor on `""`, `bravo`, `charlie`, and three gap regions of exactly one CR byte each qualify `formatting_only` (W(`"\r"`) = W("") = []) ⇒ formatting_only_bytes 3, removed_regions 3 | audit_cli.rs formatting-only cases (default and `--count-formatting`); goldens `pass-formatting.json` and `fail-count-formatting.json` |
 | `fail-deleted-block/` | unique multi-line `unique-notes.md` deleted, no copy anywhere; `keeper.txt` unchanged on both sides | verdict `fail`; unmatched_substantial_bytes 74; one entry in `unmatched[]` | audit_cli.rs deleted-block case; golden `fail.json` |
 | `inconclusive-ambiguous-common/` | whitespace-heavy file (200 spaces) deleted while head contains 4000 spaces — the region's single 16-B window key (' '×16) has 3985 corpus positions > hot-bucket limit 64 ⇒ no cold window anywhere | verdict `inconclusive` with reason `ambiguous_common`; ambiguous_common_bytes 200; ambiguous_common_regions 1 | golden `inconclusive-ambiguous-common.json` |
-| `manifest-mode/` | manifests (`base-manifest.lst`, `head-manifest.lst`) with comments and blank lines list normalized paths resolved against the manifest's parent directory; `alpha.txt`'s bytes move into created `gamma.txt`, `beta.txt` unchanged | run with `--base @base-manifest.lst --head @head-manifest.lst`: verdict `pass`; inputs.kind `manifest` on both sides; conserved_exact_bytes 49; new_bytes 11 (`relocated:` line) | audit_cli.rs manifest happy path; golden `manifest-mode.json` |
+| `manifest-mode/` | manifests (`base/base-manifest.lst`, `head/head-manifest.lst`) with comments and blank lines list normalized paths resolved against the manifest's parent directory; `alpha.txt`'s bytes move into created `gamma.txt`, `beta.txt` unchanged | run with `--base @base/base-manifest.lst --head @head/head-manifest.lst`: verdict `pass`; inputs.kind `manifest` on both sides; conserved_exact_bytes 49; new_bytes 11 (`relocated:` line) | audit_cli.rs manifest happy path; golden `manifest-mode.json` |
 | `hard-packing/` | canonical intersecting-regions fixture; byte-exact recipe pinned below | plan-pinned (§15): verdict `fail`; conserved_exact_bytes 96 (r1 at `a.txt[0..96)`); unmatched_substantial_bytes 32 (r2's residue). Recipe-implied remainder of the ledger: removed_regions 2, removed_bytes 128, conserved_fragments_bytes 0, new_bytes 15 (a.txt's unconsumed `y` tail) | Phase 1 labeled-fixture engine tests pinning the documented outcome |
 
 ## Test-time-only scenarios
@@ -107,10 +107,10 @@ e42b3999f0930a96221156381b3e1ce3ac0fafe2e93d1ad356d33aec724d463f  ./hard-packing
 738e8dce2fa46ab24802179b5d0a1de7280f826991cfff8a9a0d94165ec82cac  ./hard-packing/head/f1.txt
 2b4115a029ab615990dbb0f27184074bc3e46a08e7e65fe4098f3faba6f56187  ./inconclusive-ambiguous-common/base/ws/heavy-spaces.txt
 8666bde2be3ff7923ac93bb743525c770b9f8e7bc703cbd2551351d9dc63fec7  ./inconclusive-ambiguous-common/head/ws/bulk-spaces.txt
-3f5514dbf74ec2719f2458c79a31da79cb4b81e22c493354d5a5ef0ca326f2b9  ./manifest-mode/base-manifest.lst
+3f5514dbf74ec2719f2458c79a31da79cb4b81e22c493354d5a5ef0ca326f2b9  ./manifest-mode/base/base-manifest.lst
 830a8bcbd3d1eefeb8196a26e6fb6f44ac359df5ed58a8efc61f510d9221b8b7  ./manifest-mode/base/tree/alpha.txt
 1481d57a80b9c6a167633373155e8ff3334ae1d616f0d4fbcc21f89d486cbb84  ./manifest-mode/base/tree/beta.txt
-17d465fa02b4f192ea2c61945a407a156279abe24f81d89bcb0481d0f9502b2e  ./manifest-mode/head-manifest.lst
+17d465fa02b4f192ea2c61945a407a156279abe24f81d89bcb0481d0f9502b2e  ./manifest-mode/head/head-manifest.lst
 1481d57a80b9c6a167633373155e8ff3334ae1d616f0d4fbcc21f89d486cbb84  ./manifest-mode/head/tree/beta.txt
 45505696aa1e97caf58a88c7ff74a8868a7b3e82ea0af41d26d59e9df1d6b2a3  ./manifest-mode/head/tree/gamma.txt
 36aa37df409fcb3d525376eb132b448bcc52a5eb6aa8e00cc345b4edd6ccdaa1  ./pass-formatting/base/eol/poem.txt

@@ -1168,6 +1168,7 @@ dependencies = [
  "serde",
  "serde_json",
  "srcmv-core",
+ "srcmv-fs",
 ]
 
 [[package]]

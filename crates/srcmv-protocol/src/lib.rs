@@ -19,9 +19,15 @@ use srcmv_core::{
     SourceSelection, WorkspaceRelativePath,
 };
 
+mod audit;
 mod selection;
 mod selection_capabilities;
 
+pub use audit::{
+    AuditInconclusiveReason, AuditInputKind, AuditNoWarnings, AuditRecordStatus, AuditRenderLimits,
+    AuditReport, AuditVerdict, CONSERVATION_AUDIT_VERSION, InputTreeSummary, SkipInfo,
+    audit_report_json_line, build_audit_report, build_audit_report_with_limits,
+};
 pub use selection::{
     SELECTION_PROTOCOL_VERSION, SelectionByteSelectorDto, SelectionErrorCategory,
     SelectionErrorCode, SelectionErrorDto, SelectionExtentDto, SelectionKnownSymbolKindDto,
