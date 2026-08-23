@@ -1,6 +1,6 @@
 # Independent conservation audit implementation plan
 
-Status: proposal; not yet implemented
+Status: implemented
 
 Scope: a new read-only `srcmv audit-conservation` command that compares two
 arbitrary directory trees (typically a PR base commit tree and head commit tree)
