@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/atacan/srcmv/main/docs/schema/conservation-audit-v1/report.schema.json",
+  "title": "srcmv conservation audit v1 report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "conservation_audit_version",
+    "verdict",
+    "inconclusive_reasons",
+    "options",
+    "inputs",
+    "totals",
+    "regions",
+    "unmatched",
+    "formatting",
+    "new_content",
+    "warnings"
+  ],
+  "properties": {
+    "conservation_audit_version": { "const": 1 },
+    "verdict": { "enum": ["pass", "fail", "inconclusive"] },
+    "inconclusive_reasons": {
+      "type": "array",
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "work_budget_exceeded",
+          "memory_budget_exceeded",
+          "unreadable_input_skipped",
+          "strict_uniqueness_ambiguity",
+          "ambiguous_common",
+          "report_truncated"
+        ]
+      }
+    },
+    "options": { "$ref": "#/$defs/options" },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base", "head"],
+      "properties": {
+        "base": { "$ref": "#/$defs/input_tree" },
+        "head": { "$ref": "#/$defs/input_tree" }
+      }
+    },
+    "totals": { "$ref": "#/$defs/totals" },
+    "regions": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": { "$ref": "#/$defs/removed_region" }
+    },
+    "unmatched": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/unmatched_region" }
+    },
+    "formatting": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/formatting_region" }
+    },
+    "new_content": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/new_span" }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "omitted_region_count": { "$ref": "#/$defs/positive_u64" }
+  },
+  "$defs": {
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "positive_u64": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000]+$"
+    },
+    "byte_range": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/u64" }
+    },
+    "line_range": {
+      "type": ["array", "null"],
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/positive_u64" }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_substantial_bytes",
+        "min_fragment_bytes",
+        "strict_uniqueness",
+        "count_formatting"
+      ],
+      "properties": {
+        "min_substantial_bytes": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 18446744073709551615
+        },
+        "min_fragment_bytes": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 18446744073709551615
+        },
+        "strict_uniqueness": { "type": "boolean" },
+        "count_formatting": { "type": "boolean" }
+      }
+    },
+    "input_tree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "files", "bytes"],
+      "properties": {
+        "kind": { "enum": ["directory", "manifest"] },
+        "files": { "$ref": "#/$defs/u64" },
+        "bytes": { "$ref": "#/$defs/u64" }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removed_regions",
+        "removed_bytes",
+        "conserved_bytes",
+        "conserved_exact_bytes",
+        "conserved_fragments_bytes",
+        "formatting_only_bytes",
+        "insubstantial_residue_bytes",
+        "unmatched_substantial_bytes",
+        "ambiguous_common_bytes",
+        "unanalyzed_bytes",
+        "new_bytes",
+        "pairing_ambiguous_regions",
+        "ambiguous_common_regions"
+      ],
+      "properties": {
+        "removed_regions": { "$ref": "#/$defs/u64" },
+        "removed_bytes": { "$ref": "#/$defs/u64" },
+        "conserved_bytes": { "$ref": "#/$defs/u64" },
+        "conserved_exact_bytes": { "$ref": "#/$defs/u64" },
+        "conserved_fragments_bytes": { "$ref": "#/$defs/u64" },
+        "formatting_only_bytes": { "$ref": "#/$defs/u64" },
+        "insubstantial_residue_bytes": { "$ref": "#/$defs/u64" },
+        "unmatched_substantial_bytes": { "$ref": "#/$defs/u64" },
+        "ambiguous_common_bytes": { "$ref": "#/$defs/u64" },
+        "unanalyzed_bytes": { "$ref": "#/$defs/u64" },
+        "new_bytes": { "$ref": "#/$defs/u64" },
+        "pairing_ambiguous_regions": { "$ref": "#/$defs/u64" },
+        "ambiguous_common_regions": { "$ref": "#/$defs/u64" }
+      }
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "byte_range", "line_range"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "byte_range": { "$ref": "#/$defs/byte_range" },
+        "line_range": { "$ref": "#/$defs/line_range" }
+      }
+    },
+    "paired_destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "byte_range"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "byte_range": { "$ref": "#/$defs/byte_range" }
+      }
+    },
+    "removed_region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source_path",
+        "source_byte_range",
+        "source_line_range",
+        "length",
+        "sha256",
+        "status",
+        "pairing_ambiguous",
+        "destinations"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/u64" },
+        "source_path": { "$ref": "#/$defs/path" },
+        "source_byte_range": { "$ref": "#/$defs/byte_range" },
+        "source_line_range": { "$ref": "#/$defs/line_range" },
+        "length": { "$ref": "#/$defs/positive_u64" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "status": { "const": "conserved" },
+        "pairing_ambiguous": { "type": "boolean" },
+        "destinations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/destination" }
+        }
+      }
+    },
+    "unmatched_region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source_path",
+        "source_byte_range",
+        "source_line_range",
+        "length",
+        "sha256",
+        "status"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/u64" },
+        "source_path": { "$ref": "#/$defs/path" },
+        "source_byte_range": { "$ref": "#/$defs/byte_range" },
+        "source_line_range": { "$ref": "#/$defs/line_range" },
+        "length": { "$ref": "#/$defs/positive_u64" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "status": { "const": "unmatched_substantial" }
+      }
+    },
+    "formatting_region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source_path",
+        "source_byte_range",
+        "source_line_range",
+        "length",
+        "sha256",
+        "status"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/u64" },
+        "source_path": { "$ref": "#/$defs/path" },
+        "source_byte_range": { "$ref": "#/$defs/byte_range" },
+        "source_line_range": { "$ref": "#/$defs/line_range" },
+        "length": { "$ref": "#/$defs/positive_u64" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "status": { "const": "formatting_only" },
+        "paired_destination": { "$ref": "#/$defs/paired_destination" }
+      }
+    },
+    "new_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "byte_range", "line_range", "length", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "byte_range": { "$ref": "#/$defs/byte_range" },
+        "line_range": { "$ref": "#/$defs/line_range" },
+        "length": { "$ref": "#/$defs/positive_u64" },
+        "sha256": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}

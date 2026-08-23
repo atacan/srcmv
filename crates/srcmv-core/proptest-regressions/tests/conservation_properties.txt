@@ -1,0 +1,8 @@
+# Seeds for failure cases propagating from the conservation engine property
+# tests in crates/srcmv-core/tests/conservation_properties.rs.
+#
+# The format is managed by proptest; do not edit seeds by hand. A failing
+# seed appended here reproduces deterministically on every later run until
+# the underlying engine defect is fixed.
+cc e26fb74d77c8205c3e4e8285542b4f80e5e3977cf1900da3878e80ef0a7e55ac # shrinks to seeds = [0], rotation = 0, files = 1
+cc f232236b685b25ad884d4f621709b90c8a7c5a812c5b10cd04549d53bc1eff47 # shrinks to seeds = [11141022499243842560, 0, 0, 0], rotation = 0

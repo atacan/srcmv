@@ -21,11 +21,17 @@ use srcmv_core::{
     SnapshotFileId, WorkspaceRelativePath, WorkspaceSnapshot,
 };
 
+mod audit_tree;
 mod control;
 mod journal;
 mod recovery_classifier;
 mod transaction;
 
+pub use audit_tree::audit_tree_faults;
+pub use audit_tree::{
+    AuditTreeFile, AuditTreeLimits, SkipReason, SkippedInput, read_audit_tree,
+    read_audit_tree_from_manifest,
+};
 pub use control::LEGACY_CONTROL_NAME;
 pub use control::{
     ControlObservation, DiagnosticLock, MutationLock, RecoveryEntry, RecoveryEntryKind,

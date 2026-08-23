@@ -1,0 +1,3 @@
+# head side: alpha.txt is gone, gamma.txt carries its bytes
+tree/beta.txt
+tree/gamma.txt

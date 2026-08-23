@@ -6,10 +6,16 @@
 //! planning, protocol conversion, and execution. Planning is a pure transform
 //! from an immutable snapshot and batch specification to segment recipes.
 
+mod conservation;
 mod line_metrics;
 mod plan_hash;
 mod planner;
 
+pub use conservation::{
+    AuditFile, ConservationBudget, ConservationInput, ConservationOptions, ConservationOutcome,
+    DestinationRecord, InconclusiveReason, NewContentSpan, PairedDestination, RegionRecord,
+    RegionStatus, Totals, Verdict, audit_conservation,
+};
 pub use line_metrics::{LineIndex, LineMetrics};
 pub use plan_hash::{PLAN_HASH_VERSION, encode_plan_record, plan_digest};
 pub use planner::plan;

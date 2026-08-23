@@ -15,6 +15,7 @@ serde_json.workspace = true
 [dev-dependencies]
 jsonschema.workspace = true
 proptest = "1.7.0"
+srcmv-fs = { path = "../srcmv-fs" }
 
 [lints]
 workspace = true

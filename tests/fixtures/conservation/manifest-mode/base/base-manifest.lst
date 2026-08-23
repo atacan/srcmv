@@ -1,0 +1,4 @@
+# base side: manifest paths resolve against this file's directory
+tree/alpha.txt
+
+tree/beta.txt

@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "measured_at_utc": "2026-08-21T16:16:19Z",
+  "measured_at_utc": "2026-08-23T02:53:56Z",
   "informational_only": true,
   "thresholds": null,
   "host": {
@@ -33,6 +33,7 @@
     { "scenario": "encode_1_segment", "iterations": 100, "median_milliseconds": 0.000292, "minimum_milliseconds": 0.00025, "maximum_milliseconds": 0.0014169999999999999},
     { "scenario": "encode_1000_segments", "iterations": 25, "median_milliseconds": 0.007709000000000001, "minimum_milliseconds": 0.007541, "maximum_milliseconds": 0.021209},
     { "scenario": "encode_100000_segments", "iterations": 5, "median_milliseconds": 0.710791, "minimum_milliseconds": 0.696667, "maximum_milliseconds": 0.727292},
-    { "scenario": "reject_changed_target_limit", "iterations": 100, "median_milliseconds": 0.000834, "minimum_milliseconds": 0.000791, "maximum_milliseconds": 0.001333}
+    { "scenario": "reject_changed_target_limit", "iterations": 100, "median_milliseconds": 0.000834, "minimum_milliseconds": 0.000791, "maximum_milliseconds": 0.001333},
+    { "scenario": "audit_conservation_pr_move_200k_40_regions", "command": "target/release/srcmv audit-conservation --base pr_base --head pr_head --json (40 modified files whose unique 5120-byte payloads move into 40 created files; ~200 KB changed across ~40 regions)", "profile": "release", "iterations": 15, "median_milliseconds": 36.85154199999999, "minimum_milliseconds": 34.31541700000002, "maximum_milliseconds": 40.533458000000024}
   ]
 }
