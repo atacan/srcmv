@@ -5,11 +5,11 @@
 //! rechecked from the outcome alone), scatter completeness on friendly
 //! packings, modified-pair scatter through unique-anchor gaps, duplicated
 //! chunks exercising multiplicity counting, mutation detection (a corrupted
-//! run must fail; a single corrupted byte passes only below the floor; a
-//! provably absorbed corruption passes), determinism, and budget conversion.
-//! The canonical intersecting-regions fixture pins the documented `fail`
-//! outcome byte-exactly per the `tests/fixtures/conservation/hard-packing`
-//! README.
+//! run must fail; a single corrupted byte passes only below the floor or,
+//! asserted from the inputs, when provably absorbed; a provably absorbed
+//! corruption passes), determinism, and budget conversion. The canonical
+//! intersecting-regions fixture pins the documented `fail` outcome
+//! byte-exactly per the `tests/fixtures/conservation/hard-packing` README.
 
 use std::collections::HashMap;
 
@@ -313,6 +313,120 @@ fn fresh_alphabet_bytes(length: usize) -> Vec<u8> {
     (0..length).map(|step| 0xB0 + (step % 16) as u8).collect()
 }
 
+/// True iff `needle` occurs verbatim in some head file at a position that
+/// does not intersect the corrupted copy `(file, start, end)`.
+fn occurs_outside_corrupted_copy(
+    head_files: &[(Vec<u8>, Vec<u8>, Sha256Digest)],
+    corrupted_copy: (usize, u64, u64),
+    needle: &[u8],
+) -> bool {
+    let (file, start, end) = corrupted_copy;
+    head_files.iter().enumerate().any(|(rank, (_, bytes, _))| {
+        if bytes.len() < needle.len() {
+            return false;
+        }
+        (0..=bytes.len() - needle.len()).any(|pos| {
+            let outside =
+                rank != file || (pos as u64) + needle.len() as u64 <= start || pos as u64 >= end;
+            outside && &bytes[pos..pos + needle.len()] == needle
+        })
+    })
+}
+
+/// §15's "provably absorbed", decided from the generated inputs alone: the
+/// pristine removed payload still holds a probeable window (`K =
+/// MIN_FRAGMENT_DEFAULT` bytes — the matcher's minimum verified context,
+/// equal to the index window) that spans the wound offset and occurs
+/// verbatim somewhere in the head tree outside the corrupted copy. Every
+/// wounded byte is then carried by that escape occurrence, so a pass needs
+/// no below-the-floor residue. This covers both duplicated-chunk escapes
+/// and narrower coincidences such as a chunk-boundary suffix landing inside
+/// an inter-copy padding run beside another chunk's copy.
+fn wound_is_absorbed(
+    head_files: &[(Vec<u8>, Vec<u8>, Sha256Digest)],
+    corrupted_copy: (usize, u64, u64),
+    pristine_region: &[u8],
+    wound_offset: u64,
+) -> bool {
+    let window = MIN_FRAGMENT_DEFAULT as usize;
+    let wound = wound_offset as usize;
+    assert!(
+        wound < pristine_region.len(),
+        "wound must sit in the region"
+    );
+    let first_low = (wound + 1).saturating_sub(window);
+    let last_low = wound.min(pristine_region.len().saturating_sub(window));
+    (first_low..=last_low).any(|low| {
+        occurs_outside_corrupted_copy(
+            head_files,
+            corrupted_copy,
+            &pristine_region[low..low + window],
+        )
+    })
+}
+
+/// Builds one randomized-shape single-byte corruption case through the same
+/// generator the property drives: friendly chunks padded to 34 bytes,
+/// scattered into two head files, one byte of the victim copy flipped.
+/// Returns the packing, the audit outcome, and whether the wound was
+/// provably absorbed as computed from the inputs alone.
+fn run_single_byte_corruption_case(
+    seeds: &[u64],
+    victim_choice: usize,
+    position_choice: usize,
+    corrupt_byte: u8,
+) -> (Packing, ConservationOutcome, bool) {
+    let mut distinct = friendly_chunks(seeds);
+    // Keep every chunk comfortably above the substantiality floor.
+    for chunk in &mut distinct {
+        while chunk.len() < 34 {
+            chunk.push(0x42);
+        }
+    }
+    let victim = victim_choice % distinct.len();
+
+    let mut packing = scatter(&distinct, 2, b'#', b'%');
+    let (file, start, end) = packing.placements[victim];
+    let span = end - start;
+    assert!(span > 0, "planted copies are never empty");
+    let offset = start + (position_choice as u64 % span);
+    {
+        let host = &mut packing.head.files[file].1;
+        let original = host[offset as usize];
+        let replacement = if corrupt_byte == original {
+            original ^ 0x55
+        } else {
+            corrupt_byte
+        };
+        host[offset as usize] = replacement;
+    }
+
+    // Absorption is decided from the inputs ("assert which"): the pristine
+    // payload is the concatenated chunk layout of the base file, and the
+    // wound sits `offset - start` bytes into the victim chunk.
+    let pristine_region: Vec<u8> = distinct.concat();
+    let region_wound_offset: u64 = distinct[..victim]
+        .iter()
+        .map(|chunk| chunk.len() as u64)
+        .sum::<u64>()
+        + (offset - start);
+    let absorbed = wound_is_absorbed(
+        &packing.head.files,
+        packing.placements[victim],
+        &pristine_region,
+        region_wound_offset,
+    );
+
+    let outcome = audit_with(
+        &packing.base,
+        &packing.head,
+        ConservationOptions::default(),
+        ConservationBudget::default(),
+    )
+    .expect("corrupted audits must complete");
+    (packing, outcome, absorbed)
+}
+
 // Failure persistence is pinned to the committed regressions file below so
 // minimized seeds land in version control regardless of the default
 // SourceParallel resolution (which cannot find a crate-root lib.rs under the
@@ -466,46 +580,38 @@ proptest! {
         position_choice in 0_usize..64,
         corrupt_byte in any::<u8>(),
     ) {
-        let mut distinct = friendly_chunks(&seeds);
-        // Keep every chunk comfortably above the substantiality floor.
-        for chunk in &mut distinct {
-            while chunk.len() < 34 {
-                chunk.push(0x42);
-            }
-        }
-        let victim = victim_choice % distinct.len();
+        let (packing, outcome, absorbed) =
+            run_single_byte_corruption_case(&seeds, victim_choice, position_choice, corrupt_byte);
 
-        let mut packing = scatter(&distinct, 2, b'#', b'%');
-        let (file, start, end) = packing.placements[victim];
-        let span = end - start;
-        prop_assume!(span > 0);
-        let offset = start + (position_choice as u64 % span);
-        let host = &mut packing.head.files[file].1;
-        let original = host[offset as usize];
-        let replacement = if corrupt_byte == original {
-            original ^ 0x55
-        } else {
-            corrupt_byte
-        };
-        host[offset as usize] = replacement;
-
-        let outcome = audit_with(
-            &packing.base,
-            &packing.head,
-            ConservationOptions::default(),
-            ConservationBudget::default(),
-        )
-        .expect("corrupted audits must complete");
-
-        // Honest relabel: a Pass is permitted here ONLY because the walked-
-        // but-unmatched residue around the one-byte wound stays below the
-        // substantiality floor. Nothing substantial may be forgiven this way:
-        // at least one residue byte must exist and no byte may be counted
-        // unmatched-substantial.
+        // Honest relabel per §15's mutation bullet ("never `pass` with
+        // `unmatched_substantial_bytes == 0` unless the mutation was
+        // provably absorbed — assert which"). Derived from what this
+        // generator constructs — one coarse region over the whole base
+        // file, a one-byte wound strictly inside a planted copy, tiny
+        // inputs under default budgets — the only reachable verdict is
+        // `pass` with nothing counted unmatched-substantial (the wound is
+        // far below the 32-byte substantiality floor, and the corrupted
+        // cell blocks every in-copy walk across it). The two admissible
+        // ledger shapes are:
+        // - absorbed: some probeable window of the pristine payload still
+        //   occurs verbatim outside the corrupted copy (escape copy), so
+        //   the surviving occurrence takes the credit and the insubstantial
+        //   residue MAY be 0;
+        // - not absorbed: the pass is legitimate only because the walked-
+        //   but-unmatched residue around the one-byte wound stays below the
+        //   floor, so at least one residue byte must exist.
         prop_assert_eq!(outcome.verdict, Verdict::Pass);
-        prop_assert!(outcome.totals.insubstantial_residue_bytes >= 1);
-        prop_assert_eq!(outcome.totals.unmatched_substantial_bytes, 0);
         prop_assert!(outcome.reasons.is_empty());
+        prop_assert_eq!(outcome.totals.unmatched_substantial_bytes, 0);
+        if absorbed {
+            // Residue may legitimately be 0 here: the escape copy absorbs
+            // the mutation.
+        } else {
+            prop_assert!(
+                outcome.totals.insubstantial_residue_bytes >= 1,
+                "unabsorbed single-byte wounds must leave visible residue"
+            );
+        }
 
         assert_soundness_and_identity(&outcome, &packing.base, &packing.head);
     }
@@ -934,4 +1040,30 @@ fn conservation_audit_should_pin_absorbed_corruption_as_pass() {
     );
 
     assert_soundness_and_identity(&outcome, &base, &head);
+}
+
+/// Committed replay of the randomized counterexample reported for
+/// `single_byte_corruption_passes_only_because_residue_stays_below_the_floor`:
+/// proptest-minimized seed `[0, 8739041743340106121, 0]`, victim_choice=1,
+/// position_choice=43, corrupt_byte=0. The pristine base byte 37 equals the
+/// `b'%'` inter-copy padding byte, so the region suffix `victim tail ++
+/// chunk 2` occurs verbatim inside out-0.bin's padding run beside chunk 2's
+/// copy: the wound is provably absorbed (§15), so the audit must pass with
+/// ZERO insubstantial residue — the shape that used to trip the old
+/// unconditional `residue >= 1` assertion.
+#[test]
+fn single_byte_absorbed_wound_counterexample_replays_as_pass_without_residue() {
+    let (packing, outcome, absorbed) =
+        run_single_byte_corruption_case(&[0, 8739041743340106121, 0], 1, 43, 0);
+
+    assert!(absorbed, "this shape must classify as provably absorbed");
+    assert_eq!(outcome.verdict, Verdict::Pass);
+    assert!(outcome.reasons.is_empty());
+    assert_eq!(outcome.totals.unmatched_substantial_bytes, 0);
+    assert_eq!(
+        outcome.totals.insubstantial_residue_bytes, 0,
+        "absorbed wounds legitimately leave no walked residue"
+    );
+
+    assert_soundness_and_identity(&outcome, &packing.base, &packing.head);
 }

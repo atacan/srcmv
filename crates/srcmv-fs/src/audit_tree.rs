@@ -86,7 +86,14 @@
 //! deterministically forces vanished-mid-walk, unstable-read, and
 //! mid-acquisition type-flip outcomes. It
 //! mirrors the crate's debug-only failpoint precedent and is inert in release
-//! builds.
+//! builds. Process-level integration tests that drive the real binary cannot
+//! install thread-local state in the child, so the same faults have a second,
+//! equally test-only activation arm: with `SRCMV_TEST_CHILD=1` set,
+//! `SRCMV_TEST_AUDIT_TREE_FAULT` holds comma-separated `kind:relative/path`
+//! pairs (`vanish`, `unstable`, or `type_flip`) that force the matching
+//! outcome for that path. Like the thread-local seam this environment arm is
+//! gated on `cfg(debug_assertions)`, alters no production semantics, and
+//! exists solely for the CLI integration suite.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -363,7 +370,7 @@ pub mod audit_tree_faults {
                 slot.borrow()
                     .as_ref()
                     .is_some_and(|faults| faults.vanish.iter().any(|name| name == path))
-            })
+            }) || environment_fault_matches("vanish", path)
         }
         #[cfg(not(debug_assertions))]
         {
@@ -380,7 +387,7 @@ pub mod audit_tree_faults {
                 slot.borrow()
                     .as_ref()
                     .is_some_and(|faults| faults.unstable.iter().any(|name| name == path))
-            })
+            }) || environment_fault_matches("unstable", path)
         }
         #[cfg(not(debug_assertions))]
         {
@@ -398,13 +405,32 @@ pub mod audit_tree_faults {
                 slot.borrow()
                     .as_ref()
                     .is_some_and(|faults| faults.type_flip.iter().any(|name| name == path))
-            })
+            }) || environment_fault_matches("type_flip", path)
         }
         #[cfg(not(debug_assertions))]
         {
             let _ = path;
             false
         }
+    }
+
+    /// Environment activation arm of the test fault seam (test-only).
+    ///
+    /// Mirrors the crate's `SRCMV_TEST_FAILPOINT` journal failpoint: faults
+    /// fire only when `SRCMV_TEST_CHILD=1` is present, so nested cargo/test
+    /// processes never inherit an armed fault, and
+    /// `SRCMV_TEST_AUDIT_TREE_FAULT` lists the forced outcomes as
+    /// comma-separated `kind:relative/path` pairs. Compiled out of release
+    /// builds together with its callers; production semantics are untouched.
+    #[cfg(debug_assertions)]
+    fn environment_fault_matches(kind: &str, path: &str) -> bool {
+        std::env::var_os("SRCMV_TEST_CHILD").is_some_and(|value| value == "1")
+            && std::env::var_os("SRCMV_TEST_AUDIT_TREE_FAULT").is_some_and(|value| {
+                value
+                    .to_string_lossy()
+                    .split(',')
+                    .any(|configured| configured.split_once(':') == Some((kind, path)))
+            })
     }
 }
 

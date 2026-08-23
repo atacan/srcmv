@@ -253,6 +253,51 @@ srcmv --workspace "$DEMO_DIR/workspace" recover TRANSACTION_ID --complete --json
 # Or: srcmv --workspace "$DEMO_DIR/workspace" recover TRANSACTION_ID --rollback --json
 ```
 
+## Conservation auditing between two trees
+
+`srcmv audit-conservation` compares two arbitrary directory trees — typically a
+PR base commit tree and a head commit tree — and proves at the byte level that
+every substantial region removed from the before tree reappears exactly
+somewhere in the after tree. It is read-only over its inputs: no srcmv state,
+no Git access, no writes.
+
+```bash
+srcmv audit-conservation --base /path/to/base-tree --head /path/to/head-tree --json > audit.json
+```
+
+Each side accepts either a directory or an `@MANIFEST` text file listing one
+normalized relative path per line (entries resolve against the manifest's own
+directory). `--json` emits the bounded `conservation-audit-v1` report; without
+it the command prints a compact human summary. Options include
+`--min-substantial-bytes` (default 32), `--min-fragment-bytes` (default 16),
+`--strict-uniqueness`, and `--count-formatting`.
+
+A completed audit always exits **0**: the verdict — `pass`, `fail`, or
+`inconclusive` — is data, so automation selects with
+`jq -e '.verdict == "pass"'`. A `pass` means every substantial removed byte was
+found verbatim under one-to-one consumption accounting; a `fail` lists the
+unmatched regions with paths, ranges, lengths, and digests; an `inconclusive`
+verdict carries machine-readable reasons instead of a claim. Failures of the
+command itself use the standard error envelope and exit codes (2 request,
+4 limit/support, 8 internal).
+
+Supply commits with ordinary Git plumbing outside srcmv:
+
+```bash
+BASE=$(mktemp -d); HEAD=$(mktemp -d)
+git -C repo worktree add --detach "$BASE" "$PR_BASE_SHA"
+git -C repo worktree add --detach "$HEAD" "$PR_HEAD_SHA"
+srcmv audit-conservation --base "$BASE" --head "$HEAD" --json > audit.json
+git -C repo worktree remove "$BASE"; git -C repo worktree remove "$HEAD"
+```
+
+or losslessly with plumbing: `git archive "$SHA" | tar -x -C "$DIR"`.
+
+See the [conservation audit contract](docs/conservation-audit.md), the frozen
+[report schema](docs/schema/conservation-audit-v1/report.schema.json), and the
+runnable [example 11](examples/11-conservation-audit/) for the complete
+grammar, verdict semantics, and error table.
+
 ## Coding-agent skill
 
 The repository includes a progressively disclosed agent skill under
@@ -301,6 +346,7 @@ See the frozen contracts for exact details:
 - [agent workflow](docs/agent-integration.md)
 - [transaction and recovery model](docs/transaction-model.md)
 - [resource limits](docs/resource-limits.md)
+- [conservation audit contract](docs/conservation-audit.md)
 - [metadata contract](docs/metadata.md)
 - [security boundary](docs/security.md)
 - [qualified platforms](docs/platform-support.md)

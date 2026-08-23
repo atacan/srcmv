@@ -1108,6 +1108,7 @@ version = "0.4.0"
 dependencies = [
  "clap",
  "gen-lsp-types",
+ "jsonschema",
  "proptest",
  "serde",
  "serde_json",

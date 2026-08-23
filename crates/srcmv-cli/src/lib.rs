@@ -32,6 +32,7 @@ use srcmv_protocol::{
     WarningDto, escape_terminal_text, parse_request, parse_sha256, redact_path, to_json_line,
 };
 
+mod audit;
 mod preview;
 mod select;
 
@@ -71,6 +72,8 @@ enum Command {
     Select(select::SelectArgs),
     Apply(ApplyArgs),
     Recover(RecoverArgs),
+    #[command(name = "audit-conservation")]
+    Audit(audit::AuditArgs),
     Capabilities(JsonOnlyArgs),
     SelectionCapabilities(JsonOnlyArgs),
     ProtocolVersion(JsonOnlyArgs),
@@ -230,6 +233,12 @@ fn execute(cli: Cli, stdin: &mut dyn Read, startup_umask: u32) -> Result<String,
         }
         Command::Select(arguments) => {
             select::execute(cli.workspace.as_deref(), arguments).map_err(CommandFailure::Selection)
+        }
+        Command::Audit(arguments) => {
+            let json_output = arguments.json();
+            reject_workspace_for_target_independent(has_workspace, json_output)
+                .map_err(|(report, json)| CommandFailure::Edit(report, json))?;
+            audit::execute(arguments).map_err(|(report, json)| CommandFailure::Edit(report, json))
         }
         Command::Apply(arguments) => {
             execute_apply(cli.workspace.as_deref(), arguments, stdin, startup_umask)

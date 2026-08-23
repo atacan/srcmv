@@ -161,3 +161,38 @@ maximum merely to prove comparison behavior:
 | Planner | output/total bytes, per-output/total segments, targets, response projection, planning memory | `planner_enforces_every_phase_four_resource_boundary` |
 | Transaction | record bytes, targets, state count/bytes, directories, recovery bytes, projected disk | `journal_limits_should_pass_at_and_reject_below_each_known_schema_boundary` and `journal_scan_limits_should_reject_below_directory_recovery_and_state_byte_usage` |
 | Diff | detailed input, work units, human/JSON output bytes | `phase9_diff_limits_cover_below_at_and_above_boundaries` |
+
+## Independent conservation audit
+
+`audit-conservation` ingests two whole trees per run under these release
+defaults (trusted test constructors may lower but never raise, matching house
+rules):
+
+| Resource | Limit |
+|---|---:|
+| Files per tree | 20,000 |
+| Individual file bytes | 256 MiB |
+| Total bytes per tree | 1 GiB |
+| Path bytes | 4,096 |
+| Manifest entries / bytes | 20,000 / 4 MiB |
+| Removed regions retained | 200,000 |
+| Index memory | 2 GiB (effectively bounded by tree bytes) |
+| Hot-bucket positions | 64 |
+| Extraction work units | 200,000,000 (≈ bytes scanned/hashed) |
+| Anchor-pass effort cap | 50,000,000 work units per file pair (charged to the extraction pool; breaching degrades only that pair to fallback) |
+| Matching work units | 400,000,000 (≈ bytes compared/probed) |
+| Report regions listed | 2,000 (largest first, then source order) |
+| Report unmatched/formatting listings | 200 entries each (largest first, then source order) |
+| Report new-content spans | 50 |
+| Serialized report | 16 MiB |
+
+Audit-tree limits deliberately diverge from snapshot identities: `max_files`
+20,000 ≫ `MAX_SNAPSHOT_IDENTITIES` 1,000 because edit batches touch explicit
+paths while an audit must admit whole checkouts, with the 1 GiB per-tree byte
+cap remaining the primary bound. Exceeding a work or memory budget converts
+into an `inconclusive` verdict with a machine-readable reason rather than an
+error; only an index-memory failure before any analysis completes surfaces as
+the standard `RESOURCE_LIMIT_EXCEEDED` envelope. The serialized report is
+assembled under a running byte budget; overflow drops lowest-priority listings
+and downgrades the verdict to `inconclusive` (`report_truncated`) instead of
+manufacturing a pass.

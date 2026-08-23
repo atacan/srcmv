@@ -25,6 +25,7 @@ url.workspace = true
 
 [dev-dependencies]
 srcmv-test-support = { path = "../srcmv-test-support" }
+jsonschema.workspace = true
 proptest = "1.7.0"
 tempfile = "3.23.0"
 
