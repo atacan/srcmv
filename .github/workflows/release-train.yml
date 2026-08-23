@@ -150,6 +150,10 @@ jobs:
           set -euo pipefail
           tag="${{ steps.version.outputs.tag }}"
           notes="${{ steps.version.outputs.notes }}"
+          # An annotated tag needs a committer identity, which the
+          # persist-credentials-disabled checkout does not provide.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -F "$notes"
           # The checkout action ran with persist-credentials disabled; scope the
           # token strictly to this push command.
