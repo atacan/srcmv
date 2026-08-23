@@ -1,0 +1,213 @@
+name: Release train
+
+# Automatic tagging on version bump: when a merge to main changes the
+# workspace version relative to the newest published tag, and version-specific
+# release notes exist, this workflow creates the annotated tag and hands off
+# to the existing Release workflow. Merges without a version bump are a no-op,
+# so ordinary feature merges never release anything.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    description: Re-run detection for the current main HEAD (no-op if already tagged)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-train-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  maybe-tag-and-release:
+    name: Tag version bump on main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out main with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve candidate version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          test "${head_sha}" = "${GITHUB_SHA}"
+          # Detached checkout on push events; verify we are at main's tip.
+          git fetch --force origin main
+          test "$(git rev-parse origin/main)" = "${head_sha}"
+
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            printf 'release-train: cannot parse workspace version: %s\n' "$version" >&2
+            exit 1
+          }
+          tag="v${version}"
+
+          git fetch --force --prune --tags origin
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            printf 'release-train: %s already exists; nothing to do\n' "$tag"
+            printf 'skip=true\n' >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          highest="$(git tag -l 'v*' | LC_ALL=C sort -V | tail -n 1 || true)"
+          if test -n "$highest"; then
+            if test "$(printf '%s\n%s\n' "$highest" "$tag" | LC_ALL=C sort -V | tail -n 1)" != "$tag"; then
+              printf 'release-train: refusing to tag %s: it does not increase past %s\n' \
+                "$tag" "$highest" >&2
+              exit 1
+            fi
+          fi
+
+          notes="docs/release-${tag}.md"
+          test -s "$notes" || {
+            printf 'release-train: version bumped to %s without %s; refusing to tag\n' \
+              "$version" "$notes" >&2
+            exit 1
+          }
+          test -z "$(git status --porcelain)" || {
+            printf 'release-train: unexpected dirty working tree after checkout\n' >&2
+            exit 1
+          }
+
+          {
+            printf 'skip=false\n'
+            printf 'version=%s\n' "$version"
+            printf 'tag=%s\n' "$tag"
+            printf 'notes=%s\n' "$notes"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Wait for a successful CI run on this exact commit
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_sha="${GITHUB_SHA}"
+          deadline=$((SECONDS + 2400))
+          while true; do
+            run="$(
+              gh run list --workflow CI --commit "$head_sha" --event push --limit 1 \
+                --json databaseId,status,conclusion,url \
+                --jq '.[0] // empty'
+            )"
+            if test -n "$run"; then
+              conclusion="$(jq -r '.conclusion // ""' <<<"$run")"
+              status="$(jq -r '.status' <<<"$run")"
+              case "$status/$conclusion" in
+                completed/success)
+                  printf 'CI succeeded for %s\n' "$head_sha"
+                  exit 0
+                  ;;
+                completed/*)
+                  printf 'release-train: CI did not succeed for %s: %s/%s\n' \
+                    "$head_sha" "$status" "$conclusion" >&2
+                  printf '%s\n' "$run" >&2
+                  exit 1
+                  ;;
+              esac
+            fi
+            test "${SECONDS}" -lt "${deadline}" || {
+              printf 'release-train: timed out waiting for CI on %s; no tag was created.\n' \
+                "$head_sha" >&2
+              printf 'Re-run this workflow after CI finishes to continue.\n' >&2
+              exit 1
+            }
+            sleep 30
+          done
+
+      - name: Verify preconditions immediately before tagging
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          git fetch --force --prune --tags origin
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            printf 'release-train: %s appeared during the CI wait; refusing to move it\n' "$tag" >&2
+            exit 1
+          fi
+
+      - name: Create and push the annotated release tag
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          notes="${{ steps.version.outputs.notes }}"
+          git tag -a "$tag" -F "$notes"
+          # The checkout action ran with persist-credentials disabled; scope the
+          # token strictly to this push command.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/tags/${tag}"
+
+      - name: Dispatch the Release workflow for the new tag
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          # A GITHUB_TOKEN tag push does not trigger other workflows, so hand
+          # off to the existing Release workflow explicitly. It verifies the
+          # remote annotated tag resolves back to this commit before building.
+          gh workflow run release.yml --ref main -f tag="${tag}"
+
+      - name: Wait for the Release workflow to publish
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          head_sha="${GITHUB_SHA}"
+          # A workflow_dispatch run of release.yml --ref main has this same
+          # HEAD sha, which uniquely identifies the run we just dispatched.
+          deadline=$((SECONDS + 300))
+          run_id=""
+          while test "${SECONDS}" -lt "${deadline}"; do
+            run_id="$(
+              gh run list --workflow Release --event workflow_dispatch \
+                --commit "$head_sha" --limit 1 \
+                --json databaseId --jq '.[0].databaseId // empty' \
+                2>/dev/null || true
+            )"
+            test -z "$run_id" && sleep 10 || break
+          done
+          test -n "$run_id" || {
+            printf 'release-train: could not find the dispatched Release run for %s.\n' "$tag" >&2
+            printf 'The tag is pushed and immutable; inspect/recover with:\n' >&2
+            printf '  gh run list --workflow release.yml\n' >&2
+            exit 1
+          }
+          gh run watch "$run_id" --exit-status
+
+      - name: Summarize
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test "${{ steps.version.outputs.skip }}" = 'true'; then
+            printf '**Release train:** no untagged version bump on `%s`; nothing to do.\n' \
+              "${GITHUB_SHA}" >>"${GITHUB_STEP_SUMMARY}"
+          else
+            printf '**Release train:** tagged `%s` at `%s` and handed off to the Release workflow.\n' \
+              "${{ steps.version.outputs.tag }}" "${GITHUB_SHA}" >>"${GITHUB_STEP_SUMMARY}"
+          fi

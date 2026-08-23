@@ -46,7 +46,18 @@ the workflow is present in that release's tagged commit.
    those installed versions only; it does not bundle or certify every language
    server version.
 3. Commit and merge the release candidate to the default branch.
-4. From a clean, synchronized `main`, use the guarded release helper. It
+4. Tagging is automatic. The `Release train` workflow (`.github/workflows/release-train.yml`)
+   runs on every push to `main`; when it sees a workspace version that does not
+   yet have a `vMAJOR.MINOR.PATCH` tag, it verifies that version-specific
+   release notes exist, waits for a successful CI run on the exact HEAD,
+   creates the annotated tag from those notes, pushes it, dispatches the
+   `Release` workflow, and watches it to completion. A merge without a version
+   bump is a no-op, so ordinary feature merges never release anything. If it
+   fails before tagging (red CI, missing notes), nothing was published: fix the
+   cause and re-run the workflow with
+   `gh workflow run release-train.yml --ref main`. If it fails after tagging,
+   the tag is immutable; recover with `gh workflow run Release --ref main -f tag=vX.Y.Z`.
+5. Alternatively, from a clean, synchronized `main`, use the guarded release helper locally. It
    re-runs the local release acceptance checks, requires a successful CI push
    run for the exact commit, creates an annotated tag from the version-specific
    notes, pushes it, waits for the Release workflow, verifies the published
@@ -62,7 +73,9 @@ the workflow is present in that release's tagged commit.
    scripts/release.sh verify 0.2.0
    ```
 
-   The publish command is intentionally not a version-bump tool. Version and
+   The local helper enforces the same gates as the automated train and is kept
+   for recovery and for releases made before the train existed. The publish
+   command is intentionally not a version-bump tool. Version and
    release-note changes remain ordinary reviewed source changes, and publishing
    happens only after they are merged.
 
