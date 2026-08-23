@@ -27,6 +27,10 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      # Required to create the workflow_dispatch event that hands the pushed
+      # tag off to the Release workflow (a GITHUB_TOKEN tag push does not
+      # trigger other workflows).
+      actions: write
 
     steps:
       - name: Check out main with full history
