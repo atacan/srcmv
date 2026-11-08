@@ -155,8 +155,8 @@ language server is started during `apply`.
 ### Language-server choice
 
 Automatic selection uses trusted user configuration first, then built-in
-metadata for installed `rust-analyzer`, `gopls`, `pylsp`, `clangd`, or
-`typescript-language-server --stdio`. It does not bundle these programs and
+metadata for installed `rust-analyzer`, `gopls`, `pylsp`, `clangd`,
+`typescript-language-server --stdio`, or `sourcekit-lsp`. It does not bundle these programs and
 does not guess ambiguous extensions such as `h`. Use a configured
 `--server-id`, or make the trust decision explicit:
 

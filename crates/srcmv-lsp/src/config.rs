@@ -1030,6 +1030,15 @@ const BUILTIN_SERVERS: &[BuiltinServer] = &[
         ],
     },
     BuiltinServer {
+        id: "swift",
+        program: "sourcekit-lsp",
+        arguments: &[],
+        languages: &[BuiltinLanguage {
+            extension: "swift",
+            language_id: "swift",
+        }],
+    },
+    BuiltinServer {
         id: "typescript",
         program: "typescript-language-server",
         arguments: &["--stdio"],

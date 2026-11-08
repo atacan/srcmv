@@ -72,8 +72,109 @@ Repeated selections of one file must carry the same source SHA-256, and moved
 byte ranges must not overlap. Preview the complete multi-operation request once,
 then commit that unchanged request with its reviewed `plan_sha256`.
 
-Automatic discovery supports installed trusted server descriptors; language
-servers are not bundled or sandboxed. Treat `--server-program` and user-enabled
-workspace programs as explicit trust decisions. See the repository's
-`docs/agent-integration.md` for complete composition and server configuration,
-and `examples/10-lsp-semantic-selection/` for runnable multilingual batching.
+## Language servers
+
+srcmv does not bundle or sandbox language servers. Without `--server-id` or
+`--server-program`, it uses a matching descriptor from the user's trusted
+config file first, then a built-in descriptor whose program is installed on an
+absolute `PATH` entry outside the workspace:
+
+| ID | Program | Extensions |
+|---|---|---|
+| `rust` | `rust-analyzer` | `rs` |
+| `go` | `gopls` | `go` |
+| `python` | `pylsp` | `py` |
+| `clangd-c` | `clangd` | `c` |
+| `clangd-cpp` | `clangd` | `cc`, `cpp`, `cxx` |
+| `typescript` | `typescript-language-server --stdio` | `ts`, `tsx`, `js`, `jsx` |
+| `swift` | `sourcekit-lsp` | `swift` |
+
+Older srcmv binaries may lack some rows (the `swift` row arrived after
+v0.6.2). Ambiguous extensions such as `h` are never guessed: pass
+`--server-id clangd-c` or `--server-id clangd-cpp`. `LSP_SERVER_NOT_CONFIGURED`
+(exit 4) means no descriptor matched the extension or its program is not
+installed. Do not fall back to line ranges silently; configure a server with
+one of the options below or tell the user which server is missing.
+
+**Explicit program (one invocation).** Naming a program is an explicit trust
+decision. `--language-id` is required; each `--server-arg` is one literal
+argument and no shell interprets it. The same flags work with `outline`.
+
+```bash
+srcmv --workspace "$WORKSPACE" select \
+  --path unusual/source.ext --name target \
+  --server-program /trusted/tools/my-language-server \
+  --language-id my-language --server-arg=--stdio --json
+```
+
+**User config (persistent).** The trusted config file is `$SRCMV_CONFIG` when
+set, otherwise `~/Library/Application Support/srcmv/config.toml` on macOS or
+`$XDG_CONFIG_HOME/srcmv/config.toml` (`~/.config/srcmv/config.toml`) on Linux.
+Unknown fields are rejected. Optional fields, shown with defaults:
+`args = []`, `project_root = "."`, `allow_workspace_program = false`,
+`startup_timeout_ms = 10000`, `request_timeout_ms = 30000`.
+
+```toml
+version = 1
+
+[[servers]]
+id = "my-language"
+extensions = ["ext"]
+language_id = "my-language"
+program = "my-language-server"
+args = ["--stdio"]
+```
+
+Select it with `--server-id my-language` or let the extension match it.
+Discovery rejects executables inside the workspace unless the descriptor sets
+`allow_workspace_program = true`; treat that as a trust decision too.
+
+The server starts only after srcmv snapshots the selected file, so the selected
+bytes are exact, but project-wide meaning is a mixed-time observation. Rerun
+selection after relevant project changes. No language server runs during
+`apply`.
+
+### Swift
+
+On macOS with Xcode or the Command Line Tools, `/usr/bin/sourcekit-lsp` is on
+`PATH`, so the built-in `swift` descriptor works with no flags. It works on a
+Swift package, an Xcode project, or a loose `.swift` file, because document
+symbols are syntactic. On Linux, install a Swift toolchain that provides
+`sourcekit-lsp`.
+
+With a srcmv binary that has no `swift` built-in, use explicit flags:
+
+```bash
+srcmv --workspace "$WORKSPACE" select --path Sources/App/Parser.swift \
+  --name 'isControl(_:)' \
+  --server-program "$(xcrun --find sourcekit-lsp)" --language-id swift --json
+```
+
+or this user config entry:
+
+```toml
+version = 1
+
+[[servers]]
+id = "swift-sourcekit"
+extensions = ["swift"]
+language_id = "swift"
+program = "sourcekit-lsp"
+```
+
+sourcekit-lsp names symbols differently from most servers:
+
+- Functions, methods, and initializers use their full Swift name, including
+  argument labels: `--name 'isControl(_:)'`, `--name 'greet(with:loudly:)'`,
+  `--name 'shout()'`, `--name 'init(name:)'`. A bare `--name isControl` returns
+  `SELECTION_NOT_FOUND`. Quote these names in the shell.
+- Types and properties use the plain name: `--name Person`, `--name name`.
+- A protocol reports `interface`; an `extension Person` reports `namespace`
+  with the name `Person`. So `--name Person` matches both the type and each
+  extension. Disambiguate with `--kind struct`, `--kind class`, or
+  `--kind namespace`, or use a position query.
+- If you don't know the exact name, run `outline` first and copy the `name`, or
+  use `--at-line`/`--at-column` on the declaration.
+
+See `examples/10-lsp-semantic-selection/` in the srcmv repository for
+runnable multilingual batching.

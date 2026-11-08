@@ -243,6 +243,7 @@ guarantees:
 | `clangd-c` | `clangd` | `c` / `c` |
 | `clangd-cpp` | `clangd` | `cc`, `cpp`, `cxx` / `cpp` |
 | `typescript` | `typescript-language-server --stdio` | `ts` / `typescript`, `tsx` / `typescriptreact`, `js` / `javascript`, `jsx` / `javascriptreact` |
+| `swift` | `sourcekit-lsp` | `swift` / `swift` |
 
 Ambiguous header extensions such as `h` are intentionally not guessed. Select
 a trusted descriptor with `--server-id` or use an explicit program and language
