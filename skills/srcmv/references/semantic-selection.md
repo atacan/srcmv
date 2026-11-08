@@ -89,8 +89,8 @@ absolute `PATH` entry outside the workspace:
 | `typescript` | `typescript-language-server --stdio` | `ts`, `tsx`, `js`, `jsx` |
 | `swift` | `sourcekit-lsp` | `swift` |
 
-Older srcmv binaries may lack some rows (the `swift` row arrived after
-v0.6.2). Ambiguous extensions such as `h` are never guessed: pass
+Older srcmv binaries may lack some rows (the `swift` row arrived in
+v0.7.0). Ambiguous extensions such as `h` are never guessed: pass
 `--server-id clangd-c` or `--server-id clangd-cpp`. `LSP_SERVER_NOT_CONFIGURED`
 (exit 4) means no descriptor matched the extension or its program is not
 installed. Do not fall back to line ranges silently; configure a server with
@@ -142,7 +142,7 @@ Swift package, an Xcode project, or a loose `.swift` file, because document
 symbols are syntactic. On Linux, install a Swift toolchain that provides
 `sourcekit-lsp`.
 
-With a srcmv binary that has no `swift` built-in, use explicit flags:
+With srcmv before v0.7.0, which has no `swift` built-in, use explicit flags:
 
 ```bash
 srcmv --workspace "$WORKSPACE" select --path Sources/App/Parser.swift \
