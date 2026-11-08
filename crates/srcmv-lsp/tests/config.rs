@@ -765,6 +765,26 @@ fn built_in_resolution_should_map_typescript_react() {
 }
 
 #[test]
+fn built_in_resolution_should_map_swift() {
+    let root = TestDirectory::new("swift");
+    let workspace = root.directory("workspace");
+    let bin = root.directory("bin");
+    root.executable("bin/sourcekit-lsp");
+    let path = std::env::join_paths([bin]).expect("construct PATH");
+
+    let resolved = resolve_server(None, automatic_request(&workspace, "swift", Some(&path)))
+        .expect("resolve Swift built-in");
+
+    assert_eq!(
+        (
+            resolved.configuration_id.as_deref(),
+            resolved.language_id.as_str()
+        ),
+        (Some("swift"), "swift")
+    );
+}
+
+#[test]
 fn automatic_resolution_should_not_guess_ambiguous_header_language() {
     let root = TestDirectory::new("header");
     let workspace = root.directory("workspace");
